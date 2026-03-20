@@ -31,6 +31,7 @@ function modelLabel(id: string) {
 export default function Chat() {
   const { messages, streamingContent, statusMessage, addMessage } = useChatStore()
   const { config, updateConfig } = useConfigStore()
+  const isDark = config?.system?.darkTheme ?? true
   const [input, setInput] = useState('')
   const [bgAvatarSize, setBgAvatarSize] = useState(600)
   const bottomRef   = useRef<HTMLDivElement>(null)
@@ -118,8 +119,8 @@ export default function Chat() {
     <TooltipProvider delayDuration={200}>
       <div ref={containerRef} className="relative flex h-full flex-col bg-background">
 
-        {/* Toggle button — top right */}
-        <div className="absolute top-3 right-3 z-20">
+        {/* Toggle button — top right (dark theme only) */}
+        {isDark && <div className="absolute top-3 right-3 z-20">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -137,10 +138,10 @@ export default function Chat() {
               {avatarMode === 'header' ? 'Background mode' : 'Header mode'}
             </TooltipContent>
           </Tooltip>
-        </div>
+        </div>}
 
         {/* Background mode — avatar behind everything */}
-        {avatarMode === 'background' && (
+        {isDark && avatarMode === 'background' && (
           <div className="pointer-events-none absolute inset-0 select-none overflow-hidden" style={{ opacity: 0.85 }}>
             <div className="absolute top-0 left-1/2 -translate-x-1/2">
               <SmithAvatar agentState={avatarState} size={bgAvatarSize} />
@@ -149,7 +150,7 @@ export default function Chat() {
         )}
 
         {/* Header mode — freely draggable & resizable floating avatar */}
-        {avatarMode === 'header' && avatarX !== null && (() => {
+        {isDark && avatarMode === 'header' && avatarX !== null && (() => {
           const E = 6 // edge hit-zone thickness px
           const edges: { dir: ResizeDir; style: React.CSSProperties }[] = [
             { dir: 'n',  style: { top: 0,    left: E,    right: E,    height: E,  cursor: 'n-resize'  } },

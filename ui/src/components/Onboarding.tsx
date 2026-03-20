@@ -30,7 +30,8 @@ export default function Onboarding() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  const { saveApiKey } = useConfigStore()
+  const { config, saveApiKey } = useConfigStore()
+  const isDark = config?.system?.darkTheme ?? true
   const selected = PROVIDERS.find((p) => p.id === provider)!
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -54,9 +55,11 @@ export default function Onboarding() {
       <div className="w-full max-w-sm space-y-6">
         {/* Logo */}
         <div className="text-center space-y-1">
-          <div className="mx-auto flex items-center justify-center">
-            <SmithAvatar agentState="idle" size={180} />
-          </div>
+          {isDark && (
+            <div className="mx-auto flex items-center justify-center">
+              <SmithAvatar agentState="idle" size={180} />
+            </div>
+          )}
           <p className="text-sm text-muted-foreground">Your personal AI agent.</p>
         </div>
 
