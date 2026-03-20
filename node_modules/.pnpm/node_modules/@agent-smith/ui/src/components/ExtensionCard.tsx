@@ -8,13 +8,7 @@ import { cn } from '@/lib/utils'
 // Config field descriptors per extension name
 const EXTENSION_CONFIG_FIELDS: Record<string, { key: string; label: string; placeholder?: string; type?: string; hint?: string }[]> = {
   browser: [
-    {
-      key: 'braveApiKey',
-      label: 'Brave Search API Key',
-      placeholder: 'BSA...',
-      type: 'password',
-      hint: 'Free key at api.search.brave.com/register (2000 searches/month)',
-    },
+    { key: 'tavilyApiKey', label: 'Tavily API Key', placeholder: 'tvly-...', type: 'password', hint: 'Free at app.tavily.com (1000 searches/month)' },
   ],
   email: [
     { key: 'host', label: 'SMTP Host', placeholder: 'smtp.gmail.com' },

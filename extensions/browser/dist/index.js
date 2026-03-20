@@ -43,40 +43,35 @@ const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 function register(api) {
     api.registerTool({
         name: 'browser_search',
-        description: 'Search the web and return top results with titles, URLs, and snippets. Uses Brave Search API if configured, otherwise returns an error with setup instructions.',
+        description: 'Search the web via Tavily and return top results with titles, URLs, and content snippets',
         parameters: {
             properties: {
                 query: { type: 'string', description: 'Search query' },
-                maxResults: { type: 'number', description: 'Maximum number of results to return (default: 5, max: 10)' },
+                maxResults: { type: 'number', description: 'Maximum number of results (default: 5, max: 10)' },
             },
             required: ['query'],
         },
         run: async ({ query, maxResults = 5 }) => {
             const extConfig = (api.config.extensions['browser']?.config ?? {});
-            const braveApiKey = extConfig.braveApiKey;
-            if (!braveApiKey) {
-                return {
-                    error: 'Web search is not configured. To enable search, go to Settings → Extensions → browser → Configure and enter a Brave Search API key. Get a free key (2000 searches/month) at https://api.search.brave.com/register',
-                };
+            const apiKey = extConfig.tavilyApiKey;
+            if (!apiKey) {
+                return { error: 'Web search requires a Tavily API key. Add it in Settings → Extensions → browser → Configure. Free key at app.tavily.com (1000 searches/month).' };
             }
-            const limit = Math.min(maxResults, 10);
-            const response = await axios_1.default.get('https://api.search.brave.com/res/v1/web/search', {
-                headers: {
-                    'Accept': 'application/json',
-                    'Accept-Encoding': 'gzip',
-                    'X-Subscription-Token': braveApiKey,
-                },
-                params: { q: query, count: limit },
-                timeout: 10000,
-            });
-            const webResults = response.data?.web?.results;
-            if (!webResults || webResults.length === 0) {
+            const response = await axios_1.default.post('https://api.tavily.com/search', {
+                api_key: apiKey,
+                query,
+                max_results: Math.min(maxResults, 10),
+                search_depth: 'basic',
+                include_answer: false,
+            }, { timeout: 15000 });
+            const results = response.data?.results;
+            if (!results || results.length === 0) {
                 return { message: 'No results found for this query.' };
             }
-            return webResults.map(r => ({
+            return results.map(r => ({
                 title: r.title,
                 url: r.url,
-                snippet: r.description ?? '',
+                snippet: r.content ?? '',
             }));
         },
     });

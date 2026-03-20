@@ -31,7 +31,10 @@
       "Bash(pnpm --filter @agent-smith/extension-weather build)",
       "Bash(node:*)",
       "Bash(node -e \"require\\(''../extensions/email/dist/index.js''\\)\")",
-      "Bash(pnpm --filter @agent-smith/extension-browser build)"
+      "Bash(pnpm --filter @agent-smith/extension-browser build)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:help.apiyi.com)"
     ]
   }
 }

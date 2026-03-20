@@ -246,7 +246,7 @@ export default function Chat() {
         </ScrollArea>
 
         {/* Composer */}
-        <div className="relative px-4 pb-5">
+        <div className="relative px-4 pb-1">
           <div className="mx-auto max-w-3xl">
             <div
               className={cn(
