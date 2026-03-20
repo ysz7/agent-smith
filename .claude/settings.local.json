@@ -26,7 +26,8 @@
       "Bash(pnpm test:*)",
       "Bash(npx shadcn@latest add button input label switch dialog select tooltip textarea badge separator card scroll-area --overwrite --yes)",
       "Bash(pnpm list:*)",
-      "Bash(npx shadcn@latest add dropdown-menu --overwrite --yes)"
+      "Bash(npx shadcn@latest add dropdown-menu --overwrite --yes)",
+      "Bash(pnpm --filter @agent-smith/extension-crypto build)"
     ]
   }
 }

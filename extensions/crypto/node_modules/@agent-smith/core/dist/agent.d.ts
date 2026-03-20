@@ -1,0 +1,31 @@
+import type { IStorage, ITransport, IScheduler, IConfigManager, AgentConfig, Skill } from './interfaces';
+export declare class AgentSmith {
+    private storage;
+    private transport;
+    private scheduler;
+    private config;
+    private configManager?;
+    private tools;
+    private memory;
+    private skillLoader;
+    private extensionLoader;
+    private systemPrompt;
+    private client;
+    private auditLogPath;
+    constructor(storage: IStorage, transport: ITransport, scheduler: IScheduler, config: AgentConfig, skillDirs: string[], extensionDirs: string[], configManager?: IConfigManager | undefined);
+    start(): Promise<void>;
+    stop(): Promise<void>;
+    getSkills(): Skill[];
+    getExtensionNames(): string[];
+    runScheduledTask(taskId: string, instructions: string): Promise<void>;
+    private handleMessage;
+    private thinkStream;
+    private thinkWithMessages;
+    private handleToolUse;
+    private formatError;
+    private buildSystemPrompt;
+    private compress;
+    private writeAuditLog;
+    private registerTaskTools;
+}
+//# sourceMappingURL=agent.d.ts.map

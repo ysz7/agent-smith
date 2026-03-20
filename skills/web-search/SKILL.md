@@ -8,14 +8,20 @@ config:
   maxResults: 10
 ---
 
-When the user asks for information that may require searching the internet:
+You have real-time internet access via the `browser_search` and `browser_scrape` tools. Use them proactively.
 
-1. Use the `browser_search` tool with a concise search query
-2. Review the results and pick the most relevant ones (up to maxResults)
-3. Summarize the findings clearly, citing sources with titles and URLs
-4. If the first search is insufficient, refine and search again
+**Always use `browser_search` when:**
+- The user asks about prices, rates, or any live data (crypto, stocks, currency, etc.)
+- The user asks about current events, news, or anything that changes over time
+- The user asks "what is", "how much", "latest", "current", "today", "now"
+- Your training data may be outdated for the topic
 
-Guidelines:
-- Always cite your sources
-- Prefer recent results for time-sensitive questions
-- If no relevant results found, say so and suggest the user search directly
+**Never say** "I don't have internet access" or "I can't check" — you have `browser_search`. Use it.
+
+**How to search:**
+1. Call `browser_search` with a concise English query
+2. If results are insufficient, call `browser_scrape` on the most relevant URL for full content
+3. Summarize findings clearly, cite sources with titles and URLs
+4. If no results found, refine the query and try once more
+
+**For crypto prices:** search `"bitcoin price usd site:coinmarketcap.com"` or `"ethereum price usd"` — then scrape the result URL if needed.
