@@ -1,0 +1,192 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ConfigManager = void 0;
+const fs = __importStar(require("fs/promises"));
+const path = __importStar(require("path"));
+const os = __importStar(require("os"));
+const crypto_1 = require("crypto");
+const CONFIG_VERSION = 1;
+const DEFAULT_CONFIG = {
+    version: CONFIG_VERSION,
+    agent: {
+        name: 'Smith',
+        model: 'claude-sonnet-4-6',
+    },
+    apiKey: '',
+    skills: {},
+    extensions: {},
+    multiAgent: {
+        enabled: false,
+        dynamic: { enabled: false, maxAgents: 10, autoDestroy: true },
+        userCreated: { enabled: false, maxAgents: 10, persistAgents: true },
+    },
+    transport: {
+        port: 3000,
+        ui: true,
+        localhostOnly: true,
+    },
+    privacy: {
+        warnBeforeSendingFiles: true,
+        localAuditLog: false,
+        validateSkillsOnInstall: true,
+    },
+    performance: {
+        historyWindow: 20,
+        smartCompress: true,
+        promptCaching: true,
+    },
+    system: {
+        preventSleep: false,
+        autoOpenBrowser: true,
+        darkTheme: true,
+        language: 'en',
+    },
+};
+class ConfigManager {
+    configDir;
+    configPath;
+    constructor(configDir) {
+        this.configDir = configDir ?? path.join(os.homedir(), '.agent-smith');
+        this.configPath = path.join(this.configDir, 'config.json');
+    }
+    async load() {
+        try {
+            const raw = await fs.readFile(this.configPath, 'utf-8');
+            const saved = JSON.parse(raw);
+            return this.migrate(this.merge(DEFAULT_CONFIG, saved));
+        }
+        catch {
+            await this.save(DEFAULT_CONFIG);
+            return structuredClone(DEFAULT_CONFIG);
+        }
+    }
+    async save(config) {
+        await fs.mkdir(this.configDir, { recursive: true });
+        const current = await this.loadRaw();
+        const merged = this.merge(current, config);
+        await fs.writeFile(this.configPath, JSON.stringify(merged, null, 2), 'utf-8');
+    }
+    async setApiKey(apiKey) {
+        await this.save({ apiKey });
+    }
+    async toggleSkill(name, enabled) {
+        const config = await this.load();
+        config.skills[name] = { ...(config.skills[name] ?? {}), enabled };
+        await this.save(config);
+    }
+    async toggleExtension(name, enabled) {
+        const config = await this.load();
+        config.extensions[name] = { ...(config.extensions[name] ?? {}), enabled };
+        await this.save(config);
+    }
+    async updateSkillConfig(name, skillConfig) {
+        const config = await this.load();
+        config.skills[name] = { ...(config.skills[name] ?? { enabled: true }), config: skillConfig };
+        await this.save(config);
+    }
+    async getTasks() {
+        const config = await this.load();
+        return Object.values(config.tasks ?? {});
+    }
+    async createTask(task) {
+        const id = (0, crypto_1.randomUUID)();
+        const config = await this.load();
+        config.tasks = config.tasks ?? {};
+        config.tasks[id] = { ...task, id };
+        await this.writeConfig(config);
+        return id;
+    }
+    async updateTask(id, updates) {
+        const config = await this.load();
+        if (!config.tasks?.[id])
+            throw new Error(`Task ${id} not found`);
+        config.tasks[id] = { ...config.tasks[id], ...updates, id };
+        await this.writeConfig(config);
+    }
+    async deleteTask(id) {
+        const config = await this.load();
+        if (config.tasks) {
+            delete config.tasks[id];
+            await this.writeConfig(config);
+        }
+    }
+    async recordTaskRun(id, status, result) {
+        const config = await this.load();
+        if (!config.tasks?.[id])
+            return;
+        config.tasks[id].lastRun = new Date().toISOString();
+        config.tasks[id].lastStatus = status;
+        config.tasks[id].lastResult = result;
+        await this.writeConfig(config);
+    }
+    // Write config directly (bypasses merge — used for task mutations to avoid deep-merge issues)
+    async writeConfig(config) {
+        await fs.mkdir(this.configDir, { recursive: true });
+        await fs.writeFile(this.configPath, JSON.stringify(config, null, 2), 'utf-8');
+    }
+    async loadRaw() {
+        try {
+            const raw = await fs.readFile(this.configPath, 'utf-8');
+            return JSON.parse(raw);
+        }
+        catch {
+            return structuredClone(DEFAULT_CONFIG);
+        }
+    }
+    merge(base, override) {
+        const result = { ...base };
+        for (const key of Object.keys(override ?? {})) {
+            if (override[key] !== null &&
+                typeof override[key] === 'object' &&
+                !Array.isArray(override[key]) &&
+                typeof base[key] === 'object' &&
+                base[key] !== null) {
+                result[key] = this.merge(base[key], override[key]);
+            }
+            else if (override[key] !== undefined) {
+                result[key] = override[key];
+            }
+        }
+        return result;
+    }
+    migrate(config) {
+        // Future migrations: if (config.version < 2) { ... }
+        config.version = CONFIG_VERSION;
+        return config;
+    }
+}
+exports.ConfigManager = ConfigManager;
+//# sourceMappingURL=config-manager.js.map

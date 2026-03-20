@@ -1,0 +1,14 @@
+{
+  "name": "agent-smith",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter @agent-smith/cli run dev",
+    "build": "pnpm -r run build",
+    "test": "pnpm -r run test",
+    "start": "pnpm --filter @agent-smith/cli run start"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

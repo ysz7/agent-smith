@@ -1,0 +1,8 @@
+packages:
+  - 'core'
+  - 'cli'
+  - 'ui'
+  - 'transport/*'
+  - 'extensions/*'
+allowBuilds:
+  esbuild: true

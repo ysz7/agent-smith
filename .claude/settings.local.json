@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm install:*)",
+      "Bash(npm --version)",
+      "Bash(npm install:*)",
+      "Bash(pnpm --version)",
+      "Bash(npx pnpm:*)",
+      "Bash(pnpm approve-builds:*)",
+      "Bash(pnpm --filter @agent-smith/core build)",
+      "Bash(pnpm --filter @agent-smith/transport-local build)",
+      "Bash(pnpm --filter @agent-smith/cli build)",
+      "Bash(timeout 5 node cli/dist/index.js)",
+      "Bash(node -e \":*)",
+      "Bash(pnpm --filter @agent-smith/ui build)",
+      "Bash(netstat -ano)",
+      "Bash(xargs -I{} taskkill /PID {} /F)",
+      "Bash(taskkill:*)",
+      "Bash(cmd /c \"taskkill /PID 12456 /F\")",
+      "Bash(cmd /c \"taskkill /F /IM node.exe\" 2>&1)",
+      "Bash(cmd /c \"tasklist /FI \\\\\"PID eq 12456\\\\\"\")",
+      "Bash(powershell -Command \"Stop-Process -Id 12456 -Force -ErrorAction SilentlyContinue; Start-Sleep 1; Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue | Select-Object -Property LocalPort,State,OwningProcess\")",
+      "Bash(cmd /c \"powershell -Command \\\\\"Stop-Process -Id 12456 -Force -ErrorAction SilentlyContinue; Start-Sleep 2; \\(Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue\\).Count\\\\\"\")",
+      "Bash(pnpm build:*)",
+      "Bash(pnpm add:*)",
+      "Bash(pnpm test:*)",
+      "Bash(npx shadcn@latest add button input label switch dialog select tooltip textarea badge separator card scroll-area --overwrite --yes)",
+      "Bash(pnpm list:*)",
+      "Bash(npx shadcn@latest add dropdown-menu --overwrite --yes)"
+    ]
+  }
+}

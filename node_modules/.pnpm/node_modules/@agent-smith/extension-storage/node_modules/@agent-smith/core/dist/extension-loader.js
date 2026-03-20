@@ -1,0 +1,107 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ExtensionLoader = void 0;
+const fs = __importStar(require("fs/promises"));
+const path = __importStar(require("path"));
+class ExtensionLoader {
+    config;
+    storage;
+    extensionDirs;
+    tools = [];
+    loadedNames = [];
+    constructor(config, storage, extensionDirs) {
+        this.config = config;
+        this.storage = storage;
+        this.extensionDirs = extensionDirs;
+    }
+    async load() {
+        this.tools = [];
+        this.loadedNames = [];
+        for (const dir of this.extensionDirs) {
+            await this.loadFromDir(dir);
+        }
+    }
+    getTools() {
+        return [...this.tools];
+    }
+    getLoadedNames() {
+        return [...this.loadedNames];
+    }
+    async loadFromDir(dir) {
+        let entries;
+        try {
+            entries = await fs.readdir(dir);
+        }
+        catch {
+            return;
+        }
+        for (const entry of entries) {
+            const extConfig = this.config.extensions[entry];
+            if (extConfig?.enabled === false)
+                continue;
+            // Try compiled JS first, then fall back to direct require
+            const indexPath = path.join(dir, entry, 'dist', 'index.js');
+            const indexFallback = path.join(dir, entry, 'index.js');
+            let register;
+            for (const tryPath of [indexPath, indexFallback]) {
+                try {
+                    const mod = require(tryPath);
+                    register = mod.default ?? mod;
+                    break;
+                }
+                catch {
+                    // Try next path
+                }
+            }
+            if (!register)
+                continue;
+            this.loadedNames.push(entry);
+            const api = {
+                registerTool: (tool) => this.tools.push(tool),
+                storage: this.storage,
+                config: this.config,
+            };
+            try {
+                register(api);
+            }
+            catch (err) {
+                console.warn(`Extension "${entry}" failed to register:`, err?.message);
+            }
+        }
+    }
+}
+exports.ExtensionLoader = ExtensionLoader;
+//# sourceMappingURL=extension-loader.js.map
