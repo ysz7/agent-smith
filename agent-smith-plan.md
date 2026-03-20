@@ -926,12 +926,12 @@ Debounced chokidar watcher — перезагрузка максимум раз 
 
 ## Фаза 6 — Новые скиллы и extensions (средний приоритет)
 
-- [ ] Extension `files` — чтение/запись/поиск файлов на диске (`fs` + инструменты: `file_read`, `file_write`, `file_search`, `file_list`)
-- [ ] Skill `files` — "найди все PDF в Downloads", "прочитай этот файл", "создай файл"
-- [ ] Extension `clipboard` — чтение/запись буфера обмена (`clipboardy`): `clipboard_read`, `clipboard_write`
-- [ ] Skill `clipboard` — "что у меня в буфере", "скопируй это"
-- [ ] Extension `system` — системная информация (`os`, `child_process`): `system_info` (CPU, RAM, диск), `process_list`, `open_app`
-- [ ] Skill `system` — "сколько свободного места", "какие процессы жрут CPU", "открой приложение"
+- ✅ Extension `files` — чтение/запись/поиск файлов на диске (`fs` + инструменты: `file_read`, `file_write`, `file_search`, `file_list`)
+- ✅ Skill `files` — "найди все PDF в Downloads", "прочитай этот файл", "создай файл"
+- ✅ Extension `clipboard` — чтение/запись буфера обмена (`clipboardy`): `clipboard_read`, `clipboard_write`
+- ✅ Skill `clipboard` — "что у меня в буфере", "скопируй это"
+- ✅ Extension `system` — системная информация (`os`, `child_process`): `system_info` (CPU, RAM, диск), `process_list`, `open_app`
+- ✅ Skill `system` — "сколько свободного места", "какие процессы жрут CPU", "открой приложение"
 
 ---
 

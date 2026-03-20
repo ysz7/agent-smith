@@ -34,7 +34,13 @@
       "Bash(pnpm --filter @agent-smith/extension-browser build)",
       "WebSearch",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:help.apiyi.com)"
+      "WebFetch(domain:help.apiyi.com)",
+      "Bash(pnpm --filter @agent-smith/extension-files build)",
+      "Bash(pnpm --filter @agent-smith/extension-clipboard build)",
+      "Bash(pnpm --filter @agent-smith/extension-system build)",
+      "Bash(powershell -NoProfile -Command \"Get-Process | Sort-Object CPU -Descending | Select-Object -First 5 Name,Id,@{N='CPU%';E={[math]::Round\\(\\\\$_.CPU,1\\)}},@{N='RAM_MB';E={[math]::Round\\(\\\\$_.WorkingSet64/1MB,1\\)}} | ConvertTo-Json\" 2>&1)",
+      "Bash(powershell -NoProfile -Command \"Get-WmiObject Win32_PerfFormattedData_PerfProc_Process | Where-Object {$_.Name -ne '_Total' -and $_.Name -ne 'Idle'} | Sort-Object PercentProcessorTime -Descending | Select-Object -First 5 Name,IDProcess,PercentProcessorTime,@{N='RAM_MB';E={[math]::Round\\($_.WorkingSetPrivate/1MB,1\\)}} | ConvertTo-Json\" 2>&1)",
+      "Bash(powershell -NoProfile -Command \"Get-WmiObject Win32_PerfFormattedData_PerfProc_Process | Where-Object {$_.Name -ne '_Total' -and $_.Name -ne 'Idle'} | Sort-Object PercentProcessorTime -Descending | Select-Object -First 5 Name,IDProcess,PercentProcessorTime,WorkingSetPrivate | ConvertTo-Json\" 2>&1)"
     ]
   }
 }
