@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useConfigStore } from '@/store/config'
 import SkillCard from '@/components/SkillCard'
 import ExtensionCard from '@/components/ExtensionCard'
@@ -71,6 +71,28 @@ function GeneralSection({ config, saveApiKey, updateConfig }: any) {
   const [model, setModel] = useState(config.agent.model)
   const [saving, setSaving] = useState(false)
   const [keyError, setKeyError] = useState<string | null>(null)
+  const [styles, setStyles] = useState<{ name: string; description: string }[]>([])
+  const [activeStyle, setActiveStyle] = useState<string>(config.activeStyle ?? 'default')
+
+  const loadStyles = useCallback(async () => {
+    try {
+      const res = await fetch('/api/styles')
+      const data = await res.json()
+      setStyles(data.styles ?? [])
+      setActiveStyle(data.active ?? 'default')
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => { loadStyles() }, [loadStyles])
+
+  const handleStyleChange = async (name: string) => {
+    setActiveStyle(name)
+    await fetch('/api/styles/active', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+  }
 
   const handleSaveApiKey = async () => {
     const trimmed = apiKey.trim()
@@ -109,6 +131,20 @@ function GeneralSection({ config, saveApiKey, updateConfig }: any) {
           <option value="claude-haiku-4-5-20251001">claude-haiku-4-5-20251001</option>
         </select>
       </Field>
+
+      {styles.length > 0 && (
+        <Field label="Response Style">
+          <select
+            value={activeStyle}
+            onChange={(e) => handleStyleChange(e.target.value)}
+            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            {styles.map(s => (
+              <option key={s.name} value={s.name}>{s.name} — {s.description}</option>
+            ))}
+          </select>
+        </Field>
+      )}
 
       <Field label="API Key">
         <div className="flex gap-2">
@@ -268,7 +304,7 @@ function ExtensionsSection() {
         ? <Spinner />
         : extensions.length === 0
           ? <p className="text-sm text-muted-foreground">No extensions loaded.</p>
-          : extensions.map((e) => <ExtensionCard key={e.name} name={e.name} enabled={e.enabled} onToggled={fetchExtensions} />)
+          : extensions.map((e) => <ExtensionCard key={e.name} name={e.name} enabled={e.enabled} config={e.config} onToggled={fetchExtensions} />)
       }
     </div>
   )

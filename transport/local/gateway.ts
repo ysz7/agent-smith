@@ -17,6 +17,8 @@ export class LocalGateway implements ITransport {
   private skillsProvider?: () => { name: string; description: string; enabled: boolean; requires?: { extensions: string[] }; config?: Record<string, any> }[]
   private extensionsProvider?: () => { name: string; enabled: boolean }[]
   private historyProvider?: () => Promise<{ id: string; role: string; content: string; timestamp: string }[]>
+  private stylesProvider?: () => Promise<{ name: string; description: string }[]>
+  private setStyleHandler?: (name: string) => Promise<void>
 
   constructor(
     private port: number,
@@ -60,6 +62,14 @@ export class LocalGateway implements ITransport {
 
   setHistoryProvider(fn: () => Promise<{ id: string; role: string; content: string; timestamp: string }[]>): void {
     this.historyProvider = fn
+  }
+
+  setStylesProvider(fn: () => Promise<{ name: string; description: string }[]>): void {
+    this.stylesProvider = fn
+  }
+
+  setSetStyleHandler(fn: (name: string) => Promise<void>): void {
+    this.setStyleHandler = fn
   }
 
   start(hostname = '127.0.0.1'): void {
@@ -144,6 +154,16 @@ export class LocalGateway implements ITransport {
       }
     })
 
+    // POST /api/extensions/:name/config — save extension-specific config fields
+    this.app.post('/api/extensions/:name/config', async (req, res) => {
+      try {
+        await this.configManager.updateExtensionConfig(req.params.name, req.body)
+        res.json({ ok: true })
+      } catch {
+        res.status(500).json({ error: 'Failed to save extension config' })
+      }
+    })
+
     // GET /api/skills — returns full list of discovered skills with enabled status
     this.app.get('/api/skills', async (_req, res) => {
       try {
@@ -164,7 +184,7 @@ export class LocalGateway implements ITransport {
       }
     })
 
-    // GET /api/extensions — returns full list of discovered extensions with enabled status
+    // GET /api/extensions — returns full list of discovered extensions with enabled status and config
     this.app.get('/api/extensions', async (_req, res) => {
       try {
         if (this.extensionsProvider) {
@@ -173,6 +193,7 @@ export class LocalGateway implements ITransport {
           res.json(exts.map(e => ({
             ...e,
             enabled: config.extensions[e.name]?.enabled ?? true,
+            config: config.extensions[e.name]?.config ?? {},
           })))
         } else {
           const config = await this.configManager.load()
@@ -193,6 +214,33 @@ export class LocalGateway implements ITransport {
         }
       } catch {
         res.status(500).json({ error: 'Failed to load history' })
+      }
+    })
+
+    // GET /api/styles — list available response styles
+    this.app.get('/api/styles', async (_req, res) => {
+      try {
+        const styles = this.stylesProvider ? await this.stylesProvider() : []
+        const config = await this.configManager.load()
+        res.json({ styles, active: config.activeStyle ?? 'default' })
+      } catch {
+        res.status(500).json({ error: 'Failed to load styles' })
+      }
+    })
+
+    // POST /api/styles/active — set active response style
+    this.app.post('/api/styles/active', async (req, res) => {
+      try {
+        const { name } = req.body
+        if (typeof name !== 'string' || !name.trim()) {
+          res.status(400).json({ error: 'name is required' })
+          return
+        }
+        await this.configManager.save({ activeStyle: name })
+        if (this.setStyleHandler) await this.setStyleHandler(name)
+        res.json({ ok: true })
+      } catch {
+        res.status(500).json({ error: 'Failed to set style' })
       }
     })
 

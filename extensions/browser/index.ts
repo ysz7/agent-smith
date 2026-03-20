@@ -8,7 +8,7 @@ const USER_AGENT =
 export default function register(api: ExtensionAPI): void {
   api.registerTool({
     name: 'browser_search',
-    description: 'Search the web using DuckDuckGo and return top results with titles, URLs, and snippets',
+    description: 'Search the web and return top results with titles, URLs, and snippets. Uses Brave Search API if configured, otherwise returns an error with setup instructions.',
     parameters: {
       properties: {
         query: { type: 'string', description: 'Search query' },
@@ -17,45 +17,42 @@ export default function register(api: ExtensionAPI): void {
       required: ['query'],
     },
     run: async ({ query, maxResults = 5 }: { query: string; maxResults?: number }) => {
-      const limit = Math.min(maxResults, 10)
-      const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`
+      const extConfig = (api.config.extensions['browser']?.config ?? {}) as Record<string, string>
+      const braveApiKey = extConfig.braveApiKey
 
-      const response = await axios.get(url, {
-        headers: { 'User-Agent': USER_AGENT },
+      if (!braveApiKey) {
+        return {
+          error: 'Web search is not configured. To enable search, go to Settings → Extensions → browser → Configure and enter a Brave Search API key. Get a free key (2000 searches/month) at https://api.search.brave.com/register',
+        }
+      }
+
+      const limit = Math.min(maxResults, 10)
+
+      const response = await axios.get('https://api.search.brave.com/res/v1/web/search', {
+        headers: {
+          'Accept': 'application/json',
+          'Accept-Encoding': 'gzip',
+          'X-Subscription-Token': braveApiKey,
+        },
+        params: { q: query, count: limit },
         timeout: 10000,
       })
 
-      const $ = cheerio.load(response.data)
-      const results: Array<{ title: string; url: string; snippet: string }> = []
+      const webResults = response.data?.web?.results as Array<{
+        title: string
+        url: string
+        description?: string
+      }> | undefined
 
-      $('.result').each((_i, el) => {
-        if (results.length >= limit) return false
-
-        const titleEl = $(el).find('.result__title a')
-        const snippetEl = $(el).find('.result__snippet')
-        const title = titleEl.text().trim()
-        const href = titleEl.attr('href') ?? ''
-        const snippet = snippetEl.text().trim()
-
-        // DuckDuckGo wraps links in a redirect — extract the actual URL
-        let resultUrl = href
-        try {
-          const parsed = new URL(href, 'https://duckduckgo.com')
-          resultUrl = parsed.searchParams.get('uddg') ?? href
-        } catch {
-          // Use href as-is
-        }
-
-        if (title) {
-          results.push({ title, url: resultUrl, snippet })
-        }
-      })
-
-      if (results.length === 0) {
-        return { message: 'No results found. Try a different query.' }
+      if (!webResults || webResults.length === 0) {
+        return { message: 'No results found for this query.' }
       }
 
-      return results
+      return webResults.map(r => ({
+        title: r.title,
+        url: r.url,
+        snippet: r.description ?? '',
+      }))
     },
   })
 
@@ -73,12 +70,11 @@ export default function register(api: ExtensionAPI): void {
       const response = await axios.get(url, {
         headers: { 'User-Agent': USER_AGENT },
         timeout: 15000,
-        maxContentLength: 5 * 1024 * 1024, // 5 MB limit
+        maxContentLength: 5 * 1024 * 1024,
       })
 
       const $ = cheerio.load(response.data)
 
-      // Remove noise elements
       $('script, style, nav, footer, header, iframe, noscript, [hidden]').remove()
 
       const text = $('body')

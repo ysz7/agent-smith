@@ -145,6 +145,11 @@ async function main(): Promise<void> {
   const userExtensionsDir = path.join(agentSmithHome, 'extensions')
   const extensionDirs = [builtinExtensionsDir, userExtensionsDir]
 
+  // Style search dirs (priority: user > built-in)
+  const builtinStylesDir = path.join(repoRoot, 'styles')
+  const userStylesDir = path.join(agentSmithHome, 'styles')
+  const styleDirs = [builtinStylesDir, userStylesDir]
+
   // UI static files (built by Vite)
   const uiDir = path.join(repoRoot, 'ui', 'dist')
 
@@ -160,6 +165,7 @@ async function main(): Promise<void> {
     skillDirs,
     extensionDirs,
     configManager,
+    styleDirs,
   )
 
   const hostname = config.transport.localhostOnly !== false ? '127.0.0.1' : '0.0.0.0'
@@ -178,11 +184,14 @@ async function main(): Promise<void> {
     })),
   )
   gateway.setExtensionsProvider(() =>
-    smith.getExtensionNames().map((name) => ({
+    smith.getDiscoveredExtensionNames().map((name) => ({
       name,
       enabled: config.extensions[name]?.enabled !== false,
     })),
   )
+  gateway.setStylesProvider(() => smith.getStyles())
+  gateway.setSetStyleHandler((name) => smith.setStyle(name))
+
   gateway.setHistoryProvider(async () => {
     const msgs = await storage.get('memory:history')
     if (!Array.isArray(msgs)) return []

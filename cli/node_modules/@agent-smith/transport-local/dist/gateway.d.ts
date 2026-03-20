@@ -12,6 +12,8 @@ export declare class LocalGateway implements ITransport {
     private skillsProvider?;
     private extensionsProvider?;
     private historyProvider?;
+    private stylesProvider?;
+    private setStyleHandler?;
     constructor(port: number, configManager: IConfigManager, uiDir?: string | undefined, userSkillsDir?: string);
     onMessage(handler: (msg: IncomingMessage) => void): void;
     send(connectionId: string, message: OutgoingMessage): Promise<void>;
@@ -35,6 +37,11 @@ export declare class LocalGateway implements ITransport {
         content: string;
         timestamp: string;
     }[]>): void;
+    setStylesProvider(fn: () => Promise<{
+        name: string;
+        description: string;
+    }[]>): void;
+    setSetStyleHandler(fn: (name: string) => Promise<void>): void;
     start(hostname?: string): void;
     private setupMiddleware;
     private setupRoutes;

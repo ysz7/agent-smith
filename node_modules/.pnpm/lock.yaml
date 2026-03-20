@@ -139,6 +139,22 @@ importers:
         specifier: ^5.5.0
         version: 5.9.3
 
+  extensions/weather:
+    dependencies:
+      '@agent-smith/core':
+        specifier: workspace:*
+        version: link:../../core
+      axios:
+        specifier: ^1.7.0
+        version: 1.13.6
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+
   transport/local:
     dependencies:
       '@agent-smith/core':

@@ -160,12 +160,16 @@ async function main() {
     const builtinExtensionsDir = path.join(repoRoot, 'extensions');
     const userExtensionsDir = path.join(agentSmithHome, 'extensions');
     const extensionDirs = [builtinExtensionsDir, userExtensionsDir];
+    // Style search dirs (priority: user > built-in)
+    const builtinStylesDir = path.join(repoRoot, 'styles');
+    const userStylesDir = path.join(agentSmithHome, 'styles');
+    const styleDirs = [builtinStylesDir, userStylesDir];
     // UI static files (built by Vite)
     const uiDir = path.join(repoRoot, 'ui', 'dist');
     const storage = new transport_local_1.LocalStorage(dataDir);
     const scheduler = new transport_local_1.LocalScheduler();
     const gateway = new transport_local_1.LocalGateway(config.transport.port, configManager, uiDir, userSkillsDir);
-    const smith = new core_1.AgentSmith(storage, gateway, scheduler, config, skillDirs, extensionDirs, configManager);
+    const smith = new core_1.AgentSmith(storage, gateway, scheduler, config, skillDirs, extensionDirs, configManager, styleDirs);
     const hostname = config.transport.localhostOnly !== false ? '127.0.0.1' : '0.0.0.0';
     gateway.start(hostname);
     await smith.start();
@@ -177,10 +181,12 @@ async function main() {
         requires: s.requires,
         config: s.config,
     })));
-    gateway.setExtensionsProvider(() => smith.getExtensionNames().map((name) => ({
+    gateway.setExtensionsProvider(() => smith.getDiscoveredExtensionNames().map((name) => ({
         name,
         enabled: config.extensions[name]?.enabled !== false,
     })));
+    gateway.setStylesProvider(() => smith.getStyles());
+    gateway.setSetStyleHandler((name) => smith.setStyle(name));
     gateway.setHistoryProvider(async () => {
         const msgs = await storage.get('memory:history');
         if (!Array.isArray(msgs))
