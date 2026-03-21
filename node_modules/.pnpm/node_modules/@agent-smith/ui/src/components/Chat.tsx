@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, ChevronDown, Loader2, Plus, PanelTop, Layers } from 'lucide-react'
+import { ArrowUp, ChevronDown, Loader2, Plus, PanelTop, Layers, Square, X, Paperclip } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { useChatStore } from '@/store/chat'
 import { useConfigStore } from '@/store/config'
@@ -18,6 +18,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 import { useFloatingAvatar, type ResizeDir } from '@/hooks/useFloatingAvatar'
 
+const API = import.meta.env.DEV ? 'http://localhost:3000' : ''
+
 const MODELS: { id: string; label: string }[] = [
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
   { id: 'claude-opus-4-6', label: 'Opus 4.6' },
@@ -34,9 +36,13 @@ export default function Chat() {
   const isDark = config?.system?.darkTheme ?? true
   const [input, setInput] = useState('')
   const [bgAvatarSize, setBgAvatarSize] = useState(600)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   const bottomRef   = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const {
     mode: avatarMode, setMode: setAvatarMode,
@@ -78,18 +84,48 @@ export default function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, streamingContent])
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const text = input.trim()
-    if (!text || isStreaming) return
+    if ((!text && !pendingFile) || isStreaming) return
 
+    setUploadError(null)
+
+    // Upload attachment first if present
+    let agentFileNote = ''
+    let attachmentName: string | undefined
+    if (pendingFile) {
+      setUploading(true)
+      try {
+        const form = new FormData()
+        form.append('file', pendingFile)
+        const res = await fetch(`${API}/api/documents/upload`, { method: 'POST', body: form })
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}))
+          throw new Error(err.error ?? 'Upload failed')
+        }
+        const data = await res.json()
+        attachmentName = pendingFile.name
+        agentFileNote = `\n\n[File attached: ${pendingFile.name} — ${data.chunks} chunks indexed in memory, available for recall]`
+      } catch (err: any) {
+        setUploadError(err?.message ?? 'Upload failed')
+        setUploading(false)
+        return
+      }
+      setUploading(false)
+      setPendingFile(null)
+    }
+
+    // Show only user text in chat bubble (attachment shown as chip)
     addMessage({
       id: Math.random().toString(36).slice(2),
       role: 'user',
       content: text,
       timestamp: new Date(),
+      attachmentName,
     })
 
-    gateway.send(text)
+    // Send to agent: text + plain file note (no markdown)
+    gateway.send((text + agentFileNote).trim())
     setInput('')
 
     if (textareaRef.current) {
@@ -97,10 +133,18 @@ export default function Chat() {
     }
   }
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setPendingFile(file)
+    setUploadError(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      handleSend()
+      void handleSend()
     }
   }
 
@@ -108,6 +152,10 @@ export default function Chat() {
     setInput(e.target.value)
     e.target.style.height = 'auto'
     e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px'
+  }
+
+  const handleStop = () => {
+    gateway.stop()
   }
 
   const handleModelChange = async (modelId: string) => {
@@ -248,12 +296,23 @@ export default function Chat() {
         {/* Composer */}
         <div className="relative px-4 pb-1">
           <div className="mx-auto max-w-3xl">
-            <div
-              className={cn(
-                'rounded-2xl bg-card transition-opacity',
-                isStreaming && 'opacity-60 pointer-events-none',
+            <div className="rounded-2xl bg-card">
+              {/* Attachment chip */}
+              {pendingFile && (
+                <div className="flex items-center gap-1.5 px-4 pt-3">
+                  <div className="flex items-center gap-1.5 rounded-lg border bg-muted px-2.5 py-1 text-xs text-foreground/80">
+                    <Paperclip className="h-3 w-3 shrink-0" />
+                    <span className="max-w-[200px] truncate">{pendingFile.name}</span>
+                    <button
+                      onClick={() => setPendingFile(null)}
+                      className="text-muted-foreground hover:text-foreground ml-0.5"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                </div>
               )}
-            >
+
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -261,15 +320,35 @@ export default function Chat() {
                 onKeyDown={handleKeyDown}
                 placeholder="Reply…"
                 rows={1}
-                disabled={isStreaming}
-                className="w-full resize-none bg-transparent px-4 pt-3.5 pb-1 text-sm text-foreground placeholder:text-muted-foreground outline-none disabled:cursor-not-allowed"
+                disabled={isStreaming || uploading}
+                className="w-full resize-none bg-transparent px-4 pt-3.5 pb-1 text-sm text-foreground placeholder:text-muted-foreground outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 style={{ maxHeight: '200px', minHeight: '44px' }}
               />
 
               <div className="flex items-center justify-between px-3 pb-3 pt-1">
-                <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground">
-                  <Plus className="h-4 w-4" />
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isStreaming}
+                    >
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="text-xs">
+                    Attach file (PDF, DOCX, TXT, MD)
+                  </TooltipContent>
+                </Tooltip>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.docx,.txt,.md"
+                  className="hidden"
+                  onChange={handleFileChange}
+                />
 
                 <div className="flex items-center gap-1">
                   <DropdownMenu>
@@ -296,17 +375,33 @@ export default function Chat() {
                     </DropdownMenuContent>
                   </DropdownMenu>
 
-                  <Button
-                    size="icon"
-                    onClick={handleSend}
-                    disabled={!input.trim() || isStreaming}
-                    className="h-7 w-7 rounded-lg"
-                  >
-                    <ArrowUp className="h-3.5 w-3.5" />
-                  </Button>
+                  {isStreaming ? (
+                    <Button
+                      size="icon"
+                      onClick={handleStop}
+                      className="h-7 w-7 rounded-lg"
+                    >
+                      <Square className="h-3 w-3 fill-current" />
+                    </Button>
+                  ) : (
+                    <Button
+                      size="icon"
+                      onClick={() => void handleSend()}
+                      disabled={(!input.trim() && !pendingFile) || uploading}
+                      className="h-7 w-7 rounded-lg"
+                    >
+                      {uploading
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        : <ArrowUp className="h-3.5 w-3.5" />
+                      }
+                    </Button>
+                  )}
                 </div>
               </div>
             </div>
+            {uploadError && (
+              <p className="mt-1.5 text-xs text-destructive text-center">{uploadError}</p>
+            )}
             <p className="mt-2 text-center text-[11px] text-muted-foreground/60">
               Smith may make mistakes. Verify important information.
             </p>

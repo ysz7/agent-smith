@@ -125,4 +125,7 @@ export interface ILimaMemory {
   resetAll?(): Promise<void>
   resetHistory?(): Promise<void>
   resetFacts?(): Promise<void>
+  listDocuments?(): Promise<{ source_url: string; name: string; chunks: number; indexed: string }[]>
+  deleteDocument?(sourceUrl: string): Promise<number>
+  searchDocuments?(query: string, limit?: number): Promise<{ content: string; source: string; chunk_index?: number }[]>
 }

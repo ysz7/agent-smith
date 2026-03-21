@@ -41,6 +41,7 @@ const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
 const fs = __importStar(require("fs/promises"));
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
+const interfaces_1 = require("./interfaces");
 const memory_1 = require("./memory");
 const skill_loader_1 = require("./skill-loader");
 const extension_loader_1 = require("./extension-loader");
@@ -80,7 +81,7 @@ class AgentSmith {
         this.skillLoader = new skill_loader_1.SkillLoader(config, skillDirs);
         this.extensionLoader = new extension_loader_1.ExtensionLoader(config, storage, extensionDirs);
         this.styleLoader = new style_loader_1.StyleLoader(styleDirs);
-        this.client = new sdk_1.default({ apiKey: config.apiKey });
+        this.client = new sdk_1.default({ apiKey: this.resolveApiKey(config) });
         this.auditLogPath = path.join(os.homedir(), '.agent-smith', 'audit.log');
         this.lima = lima ?? null;
     }
@@ -199,11 +200,13 @@ class AgentSmith {
         }
         try {
             await this.transport.send(msg.connectionId, { type: 'stream_start' });
-            const response = await this.thinkStream(msg.connectionId, messages, 0, limaContext);
+            const response = await this.thinkStream(msg.connectionId, messages, 0, limaContext, msg.signal);
             await this.transport.send(msg.connectionId, { type: 'stream_end' });
-            await this.memory.add({ role: 'assistant', content: response });
+            if (response.trim()) {
+                await this.memory.add({ role: 'assistant', content: response });
+            }
             // LIMA: run decay after response to age out stale activations
-            if (this.lima) {
+            if (this.lima && response.trim()) {
                 this.lima.decay().catch(() => { });
             }
         }
@@ -216,34 +219,67 @@ class AgentSmith {
         }
     }
     // Streaming version of think — sends chunks via transport
-    async thinkStream(connectionId, messages, depth = 0, limaContext = '') {
+    async thinkStream(connectionId, messages, depth = 0, limaContext = '', signal) {
         if (depth > 5)
             return 'Maximum tool call depth reached.';
         // Audit log
         if (this.config.privacy?.localAuditLog) {
             await this.writeAuditLog({ messages });
         }
-        const toolDefs = this.tools.map(t => ({
-            name: t.name,
-            description: t.description,
-            input_schema: { type: 'object', ...t.parameters },
-        }));
+        const provider = (0, interfaces_1.detectProvider)(this.config.agent.model);
+        const cachingEnabled = this.config.performance?.promptCaching !== false;
+        const useAnthropicCache = provider === 'anthropic' && cachingEnabled;
         const systemWithContext = limaContext
             ? `${this.systemPrompt}\n\n[Long-term memory]\n${limaContext}`
             : this.systemPrompt;
-        const stream = this.client.messages.stream({
-            model: this.config.agent.model,
-            max_tokens: 4096,
-            system: systemWithContext,
-            messages,
-            ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
-        });
+        // Build tool definitions — for Anthropic caching, mark last tool with cache_control
+        const toolDefs = this.tools.map((t, i) => ({
+            name: t.name,
+            description: t.description,
+            input_schema: { type: 'object', ...t.parameters },
+            ...(useAnthropicCache && i === this.tools.length - 1
+                ? { cache_control: { type: 'ephemeral' } }
+                : {}),
+        }));
+        const stream = useAnthropicCache
+            ? this.client.beta.promptCaching.messages.stream({
+                model: this.config.agent.model,
+                max_tokens: 4096,
+                system: [{ type: 'text', text: systemWithContext, cache_control: { type: 'ephemeral' } }],
+                messages,
+                ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
+            })
+            : this.client.messages.stream({
+                model: this.config.agent.model,
+                max_tokens: 4096,
+                system: systemWithContext,
+                messages,
+                ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
+            });
         let fullText = '';
-        for await (const event of stream) {
-            if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-                fullText += event.delta.text;
-                await this.transport.send(connectionId, { type: 'chunk', content: event.delta.text });
+        let aborted = false;
+        try {
+            for await (const event of stream) {
+                if (signal?.aborted) {
+                    aborted = true;
+                    break;
+                }
+                if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+                    fullText += event.delta.text;
+                    await this.transport.send(connectionId, { type: 'chunk', content: event.delta.text });
+                }
             }
+        }
+        catch (err) {
+            if (err?.name === 'AbortError' || signal?.aborted) {
+                aborted = true;
+            }
+            else {
+                throw err;
+            }
+        }
+        if (aborted) {
+            return fullText ? fullText + '\n\n_(generation stopped)_' : '';
         }
         const finalMessage = await stream.finalMessage();
         if (finalMessage.stop_reason === 'tool_use') {
@@ -293,7 +329,7 @@ class AgentSmith {
                 { role: 'assistant', content: finalMessage.content },
                 { role: 'user', content: toolResults },
             ];
-            const continuation = await this.thinkStream(connectionId, nextMessages, depth + 1, limaContext);
+            const continuation = await this.thinkStream(connectionId, nextMessages, depth + 1, limaContext, signal);
             fullText += continuation;
         }
         return fullText;
@@ -397,6 +433,10 @@ class AgentSmith {
     }
     getStyles() {
         return this.styleLoader.list();
+    }
+    resolveApiKey(config) {
+        const provider = (0, interfaces_1.detectProvider)(config.agent.model);
+        return config.apiKeys?.[provider] ?? config.apiKey ?? '';
     }
     buildSystemPrompt(skills, styleInstructions) {
         const enabled = skills.filter(s => s.enabled);
@@ -511,6 +551,48 @@ class AgentSmith {
                 return { deleted: deleted > 0, id };
             },
         });
+        if (lima.searchDocuments) {
+            this.tools.push({
+                name: 'document_search',
+                description: 'Search across indexed documents (PDFs, DOCX, TXT, MD) for relevant content. Use when the user asks about content from uploaded files or attached documents. Returns matching passages with the source filename.',
+                parameters: {
+                    properties: {
+                        query: { type: 'string', description: 'What to search for in the documents' },
+                        limit: { type: 'number', description: 'Max number of passages to return (default 6)' },
+                    },
+                    required: ['query'],
+                },
+                run: async ({ query, limit }) => {
+                    const results = await lima.searchDocuments(query, limit ?? 6);
+                    if (results.length === 0)
+                        return { found: false, message: 'No relevant passages found in indexed documents.' };
+                    return {
+                        found: true,
+                        passages: results.map(r => ({
+                            source: r.source,
+                            content: r.content,
+                            ...(r.chunk_index !== undefined ? { chunk: r.chunk_index } : {}),
+                        })),
+                    };
+                },
+            });
+        }
+        if (lima.listDocuments) {
+            this.tools.push({
+                name: 'document_list',
+                description: 'List all documents that have been indexed in memory. Use to check what files are available before searching.',
+                parameters: { properties: {}, required: [] },
+                run: async () => {
+                    const docs = await lima.listDocuments();
+                    if (docs.length === 0)
+                        return { count: 0, documents: [] };
+                    return {
+                        count: docs.length,
+                        documents: docs.map(d => ({ name: d.name, chunks: d.chunks, indexed: d.indexed })),
+                    };
+                },
+            });
+        }
     }
     registerTaskTools(configManager) {
         const self = this;

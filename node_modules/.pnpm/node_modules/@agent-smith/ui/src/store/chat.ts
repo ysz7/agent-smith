@@ -6,6 +6,7 @@ export interface ChatMessage {
   content: string
   timestamp: Date
   isError?: boolean
+  attachmentName?: string
 }
 
 interface ChatState {
@@ -44,6 +45,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   endStreaming: () => {
     const { streamingContent } = get()
     if (streamingContent === null) return
+
+    // Don't add an empty message if stopped before any text arrived
+    if (!streamingContent.trim()) {
+      set({ streamingContent: null })
+      return
+    }
 
     const msg: ChatMessage = {
       id: Math.random().toString(36).slice(2),

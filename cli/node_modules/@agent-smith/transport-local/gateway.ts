@@ -6,6 +6,7 @@ import * as os from 'os'
 import * as fs from 'fs'
 import * as fsp from 'fs/promises'
 import { randomUUID } from 'crypto'
+import multer from 'multer'
 import type { ITransport, IConfigManager, IncomingMessage, OutgoingMessage } from '@agent-smith/core'
 import type { ILimaMemory } from '@agent-smith/lima'
 
@@ -14,6 +15,7 @@ export class LocalGateway implements ITransport {
   private server = createServer(this.app)
   private wss = new WebSocketServer({ server: this.server })
   private connections = new Map<string, WebSocket>()
+  private abortControllers = new Map<string, AbortController>()
   private messageHandler?: (msg: IncomingMessage) => void
   private userSkillsDir?: string
   private skillsProvider?: () => { name: string; description: string; enabled: boolean; requires?: { extensions: string[] }; config?: Record<string, any> }[]
@@ -22,6 +24,7 @@ export class LocalGateway implements ITransport {
   private stylesProvider?: () => Promise<{ name: string; description: string }[]>
   private setStyleHandler?: (name: string) => Promise<void>
   private lima?: ILimaMemory
+  private documentsDir?: string
 
   constructor(
     private port: number,
@@ -79,6 +82,10 @@ export class LocalGateway implements ITransport {
     this.lima = lima
   }
 
+  setDocumentsDir(dir: string): void {
+    this.documentsDir = dir
+  }
+
   start(hostname = '127.0.0.1'): void {
     this.server.on('error', (err: any) => {
       if (err.code === 'EADDRINUSE') {
@@ -124,7 +131,7 @@ export class LocalGateway implements ITransport {
       }
     })
 
-    // POST /api/config/apikey — save API key securely
+    // POST /api/config/apikey — save Anthropic API key (legacy)
     this.app.post('/api/config/apikey', async (req, res) => {
       try {
         const { apiKey } = req.body
@@ -133,6 +140,28 @@ export class LocalGateway implements ITransport {
           return
         }
         await this.configManager.setApiKey(apiKey.trim())
+        res.json({ ok: true })
+      } catch {
+        res.status(500).json({ error: 'Failed to save API key' })
+      }
+    })
+
+    // POST /api/config/apikeys/:provider — save API key for a specific provider
+    this.app.post('/api/config/apikeys/:provider', async (req, res) => {
+      try {
+        const { provider } = req.params
+        const { apiKey } = req.body
+        if (typeof apiKey !== 'string') {
+          res.status(400).json({ error: 'apiKey is required' })
+          return
+        }
+        const value = apiKey.trim()
+        // Also sync legacy apiKey for anthropic
+        if (provider === 'anthropic' && value) {
+          await this.configManager.setApiKey(value)
+        } else {
+          await this.configManager.save({ apiKeys: { [provider]: value || undefined } } as any)
+        }
         res.json({ ok: true })
       } catch {
         res.status(500).json({ error: 'Failed to save API key' })
@@ -465,6 +494,93 @@ export class LocalGateway implements ITransport {
       }
     })
 
+    // POST /api/documents/upload — upload and index a document
+    this.app.post('/api/documents/upload', (req, res) => {
+      if (!this.lima || !this.documentsDir) {
+        res.status(503).json({ error: 'Documents not configured' })
+        return
+      }
+
+      const storage = multer.diskStorage({
+        destination: (_req, _file, cb) => cb(null, this.documentsDir!),
+        filename: (_req, file, cb) => {
+          const ext = path.extname(file.originalname)
+          const base = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9._-]/g, '_')
+          cb(null, `${base}-${Date.now()}${ext}`)
+        },
+      })
+      const upload = multer({
+        storage,
+        limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+        fileFilter: (_req, file, cb) => {
+          const allowed = ['.pdf', '.docx', '.txt', '.md']
+          const ext = path.extname(file.originalname).toLowerCase()
+          cb(null, allowed.includes(ext))
+        },
+      }).single('file')
+
+      upload(req, res, async (err) => {
+        if (err) { res.status(400).json({ error: err.message }); return }
+        if (!req.file) { res.status(400).json({ error: 'No file or unsupported format (allowed: PDF, DOCX, TXT, MD)' }); return }
+
+        try {
+          const chunks = await this.lima!.ingestFile(req.file.path)
+          res.json({
+            ok: true,
+            name: req.file.originalname,
+            savedAs: req.file.filename,
+            path: req.file.path,
+            chunks,
+          })
+        } catch (ingestErr: any) {
+          await fsp.unlink(req.file.path).catch(() => {})
+          res.status(500).json({ error: ingestErr?.message ?? 'Ingestion failed' })
+        }
+      })
+    })
+
+    // GET /api/documents — list indexed documents
+    this.app.get('/api/documents', async (_req, res) => {
+      if (!this.lima) { res.json([]); return }
+      try {
+        const docs = this.lima.listDocuments ? await this.lima.listDocuments() : []
+        res.json(docs)
+      } catch {
+        res.status(500).json({ error: 'Failed to list documents' })
+      }
+    })
+
+    // DELETE /api/documents — delete document facts + file (body: { source_url })
+    this.app.delete('/api/documents', async (req, res) => {
+      if (!this.lima) { res.status(503).json({ error: 'Memory not available' }); return }
+      try {
+        const { source_url } = req.body ?? {}
+        if (!source_url) { res.status(400).json({ error: 'source_url required' }); return }
+        const deleted = this.lima.deleteDocument ? await this.lima.deleteDocument(source_url) : 0
+        // Delete physical file if it lives in our documents dir
+        if (this.documentsDir && source_url.startsWith(this.documentsDir)) {
+          await fsp.unlink(source_url).catch(() => {})
+        }
+        res.json({ ok: true, deleted })
+      } catch {
+        res.status(500).json({ error: 'Failed to delete document' })
+      }
+    })
+
+    // POST /api/documents/reindex — re-ingest a document (body: { source_url })
+    this.app.post('/api/documents/reindex', async (req, res) => {
+      if (!this.lima) { res.status(503).json({ error: 'Memory not available' }); return }
+      try {
+        const { source_url } = req.body ?? {}
+        if (!source_url) { res.status(400).json({ error: 'source_url required' }); return }
+        if (this.lima.deleteDocument) await this.lima.deleteDocument(source_url)
+        const chunks = await this.lima.ingestFile(source_url)
+        res.json({ ok: true, chunks })
+      } catch (err: any) {
+        res.status(500).json({ error: err?.message ?? 'Re-index failed' })
+      }
+    })
+
     // SPA catch-all — serve index.html for unknown routes
     if (this.uiDir && fs.existsSync(this.uiDir)) {
       this.app.get('*', (_req, res) => {
@@ -493,18 +609,31 @@ export class LocalGateway implements ITransport {
       ws.on('message', (data) => {
         try {
           const msg = JSON.parse(data.toString())
+
+          if (msg.type === 'stop') {
+            this.abortControllers.get(connectionId)?.abort()
+            return
+          }
+
+          const controller = new AbortController()
+          this.abortControllers.set(connectionId, controller)
+
           this.messageHandler?.({
             connectionId,
             type: msg.type ?? 'message',
             content: msg.content ?? '',
             agentId: msg.agentId,
+            signal: controller.signal,
           })
         } catch {
           // Invalid JSON — ignore silently
         }
       })
 
-      ws.on('close', () => this.connections.delete(connectionId))
+      ws.on('close', () => {
+        this.connections.delete(connectionId)
+        this.abortControllers.delete(connectionId)
+      })
       ws.on('error', () => this.connections.delete(connectionId))
     })
   }

@@ -46,6 +46,12 @@ class GatewayClient {
     }
   }
 
+  stop(): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'stop' }))
+    }
+  }
+
   disconnect(): void {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     this.ws?.close()

@@ -12,6 +12,7 @@ export interface IncomingMessage {
   type: string
   content: string
   agentId?: string
+  signal?: AbortSignal
 }
 
 // Outgoing message to transport layer
@@ -104,6 +105,17 @@ export interface AgentDefinition {
   skills?: Record<string, { enabled: boolean; config?: Record<string, any> }>
 }
 
+export type AIProvider = 'anthropic' | 'openai' | 'google' | 'ollama'
+
+/** Detect provider from model name */
+export function detectProvider(model: string): AIProvider {
+  if (model.startsWith('claude')) return 'anthropic'
+  if (model.startsWith('gpt-') || model.startsWith('o1') || model.startsWith('o3') || model.startsWith('o4')) return 'openai'
+  if (model.startsWith('gemini') || model.startsWith('models/gemini')) return 'google'
+  if (model.startsWith('llama') || model.startsWith('mistral') || model.startsWith('qwen') || model.startsWith('phi')) return 'ollama'
+  return 'anthropic' // default fallback
+}
+
 export interface AgentConfig {
   version?: number
   agent: {
@@ -112,7 +124,8 @@ export interface AgentConfig {
     systemPrompt?: string
   }
   activeStyle?: string
-  apiKey: string
+  apiKey: string       // legacy — maps to apiKeys.anthropic
+  apiKeys?: Partial<Record<AIProvider, string>>
   skills: Record<string, {
     enabled: boolean
     config?: Record<string, any>

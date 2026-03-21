@@ -218,6 +218,10 @@ async function main(): Promise<void> {
 
   gateway.setLima(lima)
 
+  const documentsDir = path.join(agentSmithHome, 'documents')
+  await fs.mkdir(documentsDir, { recursive: true })
+  gateway.setDocumentsDir(documentsDir)
+
   gateway.setHistoryProvider(async () => {
     const msgs = await history.getRecent(50)
     return msgs

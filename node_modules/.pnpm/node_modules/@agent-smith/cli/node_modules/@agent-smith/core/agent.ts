@@ -15,6 +15,7 @@ import type {
   Message,
   IncomingMessage,
 } from './interfaces'
+import { detectProvider } from './interfaces'
 import { Memory } from './memory'
 import { SkillLoader } from './skill-loader'
 import { ExtensionLoader } from './extension-loader'
@@ -59,7 +60,7 @@ export class AgentSmith {
     this.skillLoader = new SkillLoader(config, skillDirs)
     this.extensionLoader = new ExtensionLoader(config, storage, extensionDirs)
     this.styleLoader = new StyleLoader(styleDirs)
-    this.client = new Anthropic({ apiKey: config.apiKey })
+    this.client = new Anthropic({ apiKey: this.resolveApiKey(config) })
     this.auditLogPath = path.join(os.homedir(), '.agent-smith', 'audit.log')
     this.lima = lima ?? null
   }
@@ -199,12 +200,14 @@ export class AgentSmith {
 
     try {
       await this.transport.send(msg.connectionId, { type: 'stream_start' })
-      const response = await this.thinkStream(msg.connectionId, messages, 0, limaContext)
+      const response = await this.thinkStream(msg.connectionId, messages, 0, limaContext, msg.signal)
       await this.transport.send(msg.connectionId, { type: 'stream_end' })
-      await this.memory.add({ role: 'assistant', content: response })
+      if (response.trim()) {
+        await this.memory.add({ role: 'assistant', content: response })
+      }
 
       // LIMA: run decay after response to age out stale activations
-      if (this.lima) {
+      if (this.lima && response.trim()) {
         this.lima.decay().catch(() => {})
       }
     } catch (err: any) {
@@ -222,6 +225,7 @@ export class AgentSmith {
     messages: Array<{ role: 'user' | 'assistant'; content: any }>,
     depth = 0,
     limaContext = '',
+    signal?: AbortSignal,
   ): Promise<string> {
     if (depth > 5) return 'Maximum tool call depth reached.'
 
@@ -230,31 +234,61 @@ export class AgentSmith {
       await this.writeAuditLog({ messages })
     }
 
-    const toolDefs = this.tools.map(t => ({
-      name: t.name,
-      description: t.description,
-      input_schema: { type: 'object' as const, ...t.parameters },
-    }))
+    const provider = detectProvider(this.config.agent.model)
+    const cachingEnabled = this.config.performance?.promptCaching !== false
+    const useAnthropicCache = provider === 'anthropic' && cachingEnabled
 
     const systemWithContext = limaContext
       ? `${this.systemPrompt}\n\n[Long-term memory]\n${limaContext}`
       : this.systemPrompt
 
-    const stream = this.client.messages.stream({
-      model: this.config.agent.model,
-      max_tokens: 4096,
-      system: systemWithContext,
-      messages,
-      ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
-    })
+    // Build tool definitions — for Anthropic caching, mark last tool with cache_control
+    const toolDefs = this.tools.map((t, i) => ({
+      name: t.name,
+      description: t.description,
+      input_schema: { type: 'object' as const, ...t.parameters },
+      ...(useAnthropicCache && i === this.tools.length - 1
+        ? { cache_control: { type: 'ephemeral' as const } }
+        : {}),
+    }))
+
+    const stream = useAnthropicCache
+      ? this.client.beta.promptCaching.messages.stream({
+          model: this.config.agent.model,
+          max_tokens: 4096,
+          system: [{ type: 'text', text: systemWithContext, cache_control: { type: 'ephemeral' } }],
+          messages,
+          ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
+        })
+      : this.client.messages.stream({
+          model: this.config.agent.model,
+          max_tokens: 4096,
+          system: systemWithContext,
+          messages,
+          ...(toolDefs.length > 0 ? { tools: toolDefs as any } : {}),
+        })
 
     let fullText = ''
+    let aborted = false
 
-    for await (const event of stream) {
-      if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-        fullText += event.delta.text
-        await this.transport.send(connectionId, { type: 'chunk', content: event.delta.text })
+    try {
+      for await (const event of stream) {
+        if (signal?.aborted) { aborted = true; break }
+        if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+          fullText += event.delta.text
+          await this.transport.send(connectionId, { type: 'chunk', content: event.delta.text })
+        }
       }
+    } catch (err: any) {
+      if (err?.name === 'AbortError' || signal?.aborted) {
+        aborted = true
+      } else {
+        throw err
+      }
+    }
+
+    if (aborted) {
+      return fullText ? fullText + '\n\n_(generation stopped)_' : ''
     }
 
     const finalMessage = await stream.finalMessage()
@@ -311,7 +345,7 @@ export class AgentSmith {
         { role: 'user' as const, content: toolResults },
       ]
 
-      const continuation = await this.thinkStream(connectionId, nextMessages, depth + 1, limaContext)
+      const continuation = await this.thinkStream(connectionId, nextMessages, depth + 1, limaContext, signal)
       fullText += continuation
     }
 
@@ -439,6 +473,11 @@ export class AgentSmith {
     return this.styleLoader.list()
   }
 
+  private resolveApiKey(config: AgentConfig): string {
+    const provider = detectProvider(config.agent.model)
+    return config.apiKeys?.[provider] ?? config.apiKey ?? ''
+  }
+
   private buildSystemPrompt(skills: Skill[], styleInstructions?: string): string {
     const enabled = skills.filter(s => s.enabled)
 
@@ -562,6 +601,48 @@ export class AgentSmith {
         return { deleted: deleted > 0, id }
       },
     })
+
+    if (lima.searchDocuments) {
+      this.tools.push({
+        name: 'document_search',
+        description: 'Search across indexed documents (PDFs, DOCX, TXT, MD) for relevant content. Use when the user asks about content from uploaded files or attached documents. Returns matching passages with the source filename.',
+        parameters: {
+          properties: {
+            query: { type: 'string', description: 'What to search for in the documents' },
+            limit: { type: 'number', description: 'Max number of passages to return (default 6)' },
+          },
+          required: ['query'],
+        },
+        run: async ({ query, limit }: { query: string; limit?: number }) => {
+          const results = await lima.searchDocuments!(query, limit ?? 6)
+          if (results.length === 0) return { found: false, message: 'No relevant passages found in indexed documents.' }
+          return {
+            found: true,
+            passages: results.map(r => ({
+              source: r.source,
+              content: r.content,
+              ...(r.chunk_index !== undefined ? { chunk: r.chunk_index } : {}),
+            })),
+          }
+        },
+      })
+    }
+
+    if (lima.listDocuments) {
+      this.tools.push({
+        name: 'document_list',
+        description: 'List all documents that have been indexed in memory. Use to check what files are available before searching.',
+        parameters: { properties: {}, required: [] },
+        run: async () => {
+          const docs = await lima.listDocuments!()
+          if (docs.length === 0) return { count: 0, documents: [] }
+          return {
+            count: docs.length,
+            documents: docs.map(d => ({ name: d.name, chunks: d.chunks, indexed: d.indexed })),
+          }
+        },
+      })
+    }
   }
 
   private registerTaskTools(configManager: IConfigManager): void {

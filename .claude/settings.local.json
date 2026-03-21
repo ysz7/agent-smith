@@ -42,7 +42,14 @@
       "Bash(powershell -NoProfile -Command \"Get-WmiObject Win32_PerfFormattedData_PerfProc_Process | Where-Object {$_.Name -ne '_Total' -and $_.Name -ne 'Idle'} | Sort-Object PercentProcessorTime -Descending | Select-Object -First 5 Name,IDProcess,PercentProcessorTime,@{N='RAM_MB';E={[math]::Round\\($_.WorkingSetPrivate/1MB,1\\)}} | ConvertTo-Json\" 2>&1)",
       "Bash(powershell -NoProfile -Command \"Get-WmiObject Win32_PerfFormattedData_PerfProc_Process | Where-Object {$_.Name -ne '_Total' -and $_.Name -ne 'Idle'} | Sort-Object PercentProcessorTime -Descending | Select-Object -First 5 Name,IDProcess,PercentProcessorTime,WorkingSetPrivate | ConvertTo-Json\" 2>&1)",
       "Bash(pnpm:*)",
-      "Bash(npx vite:*)"
+      "Bash(npx vite:*)",
+      "Bash(xargs wc:*)",
+      "Bash(xargs grep:*)",
+      "Bash(grep -h \"registerTool\" extensions/*/index.ts)",
+      "Bash(grep -h \"name:\" extensions/*/index.ts)",
+      "Bash(grep -v \"//\")",
+      "Bash(find node_modules -name package.json -path *anthropic* ! -path *pnpm*)",
+      "Bash(find node_modules/.pnpm -name package.json -path *anthropic-ai*sdk*)"
     ]
   }
 }

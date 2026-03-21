@@ -9,6 +9,7 @@ export interface IncomingMessage {
     type: string;
     content: string;
     agentId?: string;
+    signal?: AbortSignal;
 }
 export interface OutgoingMessage {
     type: string;
@@ -88,6 +89,9 @@ export interface AgentDefinition {
         config?: Record<string, any>;
     }>;
 }
+export type AIProvider = 'anthropic' | 'openai' | 'google' | 'ollama';
+/** Detect provider from model name */
+export declare function detectProvider(model: string): AIProvider;
 export interface AgentConfig {
     version?: number;
     agent: {
@@ -97,6 +101,7 @@ export interface AgentConfig {
     };
     activeStyle?: string;
     apiKey: string;
+    apiKeys?: Partial<Record<AIProvider, string>>;
     skills: Record<string, {
         enabled: boolean;
         config?: Record<string, any>;

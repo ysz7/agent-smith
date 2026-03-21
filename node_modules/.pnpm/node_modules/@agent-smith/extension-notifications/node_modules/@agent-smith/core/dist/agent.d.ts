@@ -29,6 +29,7 @@ export declare class AgentSmith {
     private formatError;
     setStyle(name: string): Promise<void>;
     getStyles(): Promise<import('./style-loader').ResponseStyle[]>;
+    private resolveApiKey;
     private buildSystemPrompt;
     private compress;
     private writeAuditLog;

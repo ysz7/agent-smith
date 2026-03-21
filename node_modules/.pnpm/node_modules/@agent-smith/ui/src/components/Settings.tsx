@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useConfigStore } from '@/store/config'
 import SkillCard from '@/components/SkillCard'
 import ExtensionCard from '@/components/ExtensionCard'
@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 
-type Section = 'general' | 'security' | 'performance' | 'skills' | 'extensions' | 'system' | 'memory'
+type Section = 'general' | 'security' | 'performance' | 'skills' | 'extensions' | 'system' | 'memory' | 'documents'
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'general', label: 'General' },
@@ -20,6 +20,7 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'extensions', label: 'Extensions' },
   { id: 'system', label: 'System' },
   { id: 'memory', label: 'Memory' },
+  { id: 'documents', label: 'Documents' },
 ]
 
 export default function Settings() {
@@ -53,13 +54,14 @@ export default function Settings() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-8 py-6">
-        {section === 'general' && <GeneralSection config={config} saveApiKey={saveApiKey} updateConfig={updateConfig} />}
+        {section === 'general' && <GeneralSection config={config} updateConfig={updateConfig} />}
         {section === 'security' && <SecuritySection config={config} updateConfig={updateConfig} />}
         {section === 'performance' && <PerformanceSection config={config} updateConfig={updateConfig} />}
         {section === 'skills' && <SkillsSection />}
         {section === 'extensions' && <ExtensionsSection />}
         {section === 'system' && <SystemSection config={config} updateConfig={updateConfig} />}
         {section === 'memory' && <MemorySection />}
+        {section === 'documents' && <DocumentsSection />}
       </div>
     </div>
   )
@@ -67,15 +69,49 @@ export default function Settings() {
 
 // ─── General ──────────────────────────────────────────────────────────────────
 
-function GeneralSection({ config, saveApiKey, updateConfig }: any) {
-  const [apiKey, setApiKey] = useState('')
-  const [showKey, setShowKey] = useState(false)
+const PROVIDERS: { id: string; label: string; placeholder: string; models: string[] }[] = [
+  {
+    id: 'anthropic',
+    label: 'Anthropic',
+    placeholder: 'sk-ant-…',
+    models: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'],
+  },
+  {
+    id: 'openai',
+    label: 'OpenAI',
+    placeholder: 'sk-…',
+    models: ['gpt-4o', 'gpt-4o-mini', 'o3', 'o4-mini'],
+  },
+  {
+    id: 'google',
+    label: 'Google',
+    placeholder: 'AIza…',
+    models: ['gemini-2.5-pro', 'gemini-2.0-flash'],
+  },
+  {
+    id: 'ollama',
+    label: 'Ollama (local)',
+    placeholder: 'no key needed',
+    models: ['llama3.3', 'mistral', 'qwen2.5', 'phi4'],
+  },
+]
+
+function detectProviderFromModel(model: string): string {
+  if (model.startsWith('claude')) return 'anthropic'
+  if (model.startsWith('gpt-') || model.startsWith('o3') || model.startsWith('o4')) return 'openai'
+  if (model.startsWith('gemini')) return 'google'
+  return 'ollama'
+}
+
+function GeneralSection({ config, updateConfig }: any) {
   const [agentName, setAgentName] = useState(config.agent.name)
   const [model, setModel] = useState(config.agent.model)
-  const [saving, setSaving] = useState(false)
-  const [keyError, setKeyError] = useState<string | null>(null)
   const [styles, setStyles] = useState<{ name: string; description: string }[]>([])
   const [activeStyle, setActiveStyle] = useState<string>(config.activeStyle ?? 'default')
+  const [keys, setKeys] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState<Record<string, boolean>>({})
+  const [saved, setSaved] = useState<Record<string, boolean>>({})
+  const [keyErrors, setKeyErrors] = useState<Record<string, string>>({})
 
   const loadStyles = useCallback(async () => {
     try {
@@ -97,23 +133,33 @@ function GeneralSection({ config, saveApiKey, updateConfig }: any) {
     })
   }
 
-  const handleSaveApiKey = async () => {
-    const trimmed = apiKey.trim()
-    if (!trimmed) return
-    if (!trimmed.startsWith('sk-ant-')) {
-      setKeyError('Invalid key format. Anthropic keys start with "sk-ant-".')
-      return
+  const handleSaveKey = async (providerId: string) => {
+    const key = (keys[providerId] ?? '').trim()
+    if (!key) return
+    setSaving(s => ({ ...s, [providerId]: true }))
+    setKeyErrors(e => ({ ...e, [providerId]: '' }))
+    try {
+      const res = await fetch(`/api/config/apikeys/${providerId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: key }),
+      })
+      if (!res.ok) throw new Error('Failed')
+      setKeys(k => ({ ...k, [providerId]: '' }))
+      setSaved(s => ({ ...s, [providerId]: true }))
+      setTimeout(() => setSaved(s => ({ ...s, [providerId]: false })), 2000)
+    } catch {
+      setKeyErrors(e => ({ ...e, [providerId]: 'Failed to save' }))
     }
-    setKeyError(null)
-    setSaving(true)
-    await saveApiKey(trimmed)
-    setApiKey('')
-    setSaving(false)
+    setSaving(s => ({ ...s, [providerId]: false }))
   }
 
   const handleSaveAgent = async () => {
     await updateConfig({ agent: { ...config.agent, name: agentName, model } })
   }
+
+  const activeProvider = detectProviderFromModel(model)
+  const allModels = PROVIDERS.flatMap(p => p.models.map(m => ({ model: m, provider: p.id, label: p.label })))
 
   return (
     <div className="space-y-6 max-w-md">
@@ -126,13 +172,23 @@ function GeneralSection({ config, saveApiKey, updateConfig }: any) {
       <Field label="Model">
         <select
           value={model}
-          onChange={(e) => { setModel(e.target.value); handleSaveAgent() }}
+          onChange={(e) => { setModel(e.target.value); updateConfig({ agent: { ...config.agent, model: e.target.value } }) }}
           className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
         >
-          <option value="claude-sonnet-4-6">claude-sonnet-4-6</option>
-          <option value="claude-opus-4-6">claude-opus-4-6</option>
-          <option value="claude-haiku-4-5-20251001">claude-haiku-4-5-20251001</option>
+          {PROVIDERS.map(p => (
+            <optgroup key={p.id} label={p.label}>
+              {p.models.map(m => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </optgroup>
+          ))}
         </select>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Provider: <span className="font-medium">{PROVIDERS.find(p => p.id === activeProvider)?.label ?? activeProvider}</span>
+          {activeProvider === 'anthropic' && ' · prompt caching enabled'}
+          {activeProvider === 'openai' && ' · caching automatic'}
+          {activeProvider === 'ollama' && ' · local, no caching'}
+        </p>
       </Field>
 
       {styles.length > 0 && (
@@ -149,33 +205,49 @@ function GeneralSection({ config, saveApiKey, updateConfig }: any) {
         </Field>
       )}
 
-      <Field label="API Key">
-        <div className="flex gap-2">
-          <div className="relative flex-1">
-            <Input
-              type={showKey ? 'text' : 'password'}
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={config.apiKey === '***' ? 'Change API key…' : 'Enter API key…'}
-              className="pr-14"
-            />
-            <button
-              type="button"
-              onClick={() => setShowKey(!showKey)}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground hover:text-foreground"
-            >
-              {showKey ? 'Hide' : 'Show'}
-            </button>
-          </div>
-          <Button variant="secondary" size="sm" onClick={handleSaveApiKey} disabled={!apiKey.trim() || saving}>
-            Save
-          </Button>
+      <div className="space-y-1.5">
+        <Label className="text-muted-foreground">API Keys</Label>
+        <div className="space-y-2">
+          {PROVIDERS.filter(p => p.id !== 'ollama').map(p => {
+            const isActive = p.id === activeProvider
+            const isSet = p.id === 'anthropic'
+              ? config.apiKey === '***'
+              : config.apiKeys?.[p.id] === '***'
+            return (
+              <div key={p.id} className={cn(
+                'rounded-lg border px-3 py-2.5',
+                isActive && 'border-foreground/30 bg-card',
+              )}>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs font-medium">{p.label}</span>
+                  {isActive && <span className="text-[10px] bg-foreground/10 text-foreground/70 rounded px-1.5 py-0.5">active</span>}
+                  {isSet && <span className="text-[10px] text-emerald-500">✓ set</span>}
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    type="password"
+                    value={keys[p.id] ?? ''}
+                    onChange={(e) => setKeys(k => ({ ...k, [p.id]: e.target.value }))}
+                    placeholder={isSet ? 'Change key…' : p.placeholder}
+                    className="text-xs h-8"
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleSaveKey(p.id) }}
+                  />
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="h-8 px-3 text-xs shrink-0"
+                    onClick={() => handleSaveKey(p.id)}
+                    disabled={!keys[p.id]?.trim() || saving[p.id]}
+                  >
+                    {saved[p.id] ? '✓' : saving[p.id] ? '…' : 'Save'}
+                  </Button>
+                </div>
+                {keyErrors[p.id] && <p className="mt-1 text-xs text-destructive">{keyErrors[p.id]}</p>}
+              </div>
+            )
+          })}
         </div>
-        {keyError && <p className="mt-1.5 text-xs text-destructive">{keyError}</p>}
-        {config.apiKey === '***' && !keyError && (
-          <p className="mt-1.5 text-xs text-foreground/50">✓ API key is set</p>
-        )}
-      </Field>
+      </div>
     </div>
   )
 }
@@ -376,6 +448,151 @@ function ToggleRow({ label, description, value, onChange }: {
         <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
       </div>
       <Switch checked={value} onCheckedChange={onChange} className="shrink-0" />
+    </div>
+  )
+}
+
+// ─── Documents ────────────────────────────────────────────────────────────────
+
+const API = import.meta.env.DEV ? 'http://localhost:3000' : ''
+
+interface DocEntry {
+  source_url: string
+  name: string
+  chunks: number
+  indexed: string
+}
+
+function DocumentsSection() {
+  const [docs, setDocs] = useState<DocEntry[]>([])
+  const [loading, setLoading] = useState(true)
+  const [working, setWorking] = useState<string | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const loadDocs = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(`${API}/api/documents`)
+      if (res.ok) setDocs(await res.json())
+    } catch { /* ignore */ }
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { loadDocs() }, [loadDocs])
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadError(null)
+    setWorking('upload')
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const res = await fetch(`${API}/api/documents/upload`, { method: 'POST', body: form })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error ?? 'Upload failed')
+      }
+      await loadDocs()
+    } catch (err: any) {
+      setUploadError(err?.message ?? 'Upload failed')
+    }
+    if (fileInputRef.current) fileInputRef.current.value = ''
+    setWorking(null)
+  }
+
+  const handleDelete = async (doc: DocEntry) => {
+    if (!confirm(`Remove "${doc.name}" and delete all its indexed content?`)) return
+    setWorking(doc.source_url)
+    try {
+      await fetch(`${API}/api/documents`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_url: doc.source_url }),
+      })
+      await loadDocs()
+    } catch { /* ignore */ }
+    setWorking(null)
+  }
+
+  const handleReindex = async (doc: DocEntry) => {
+    setWorking(doc.source_url + '-reindex')
+    try {
+      const res = await fetch(`${API}/api/documents/reindex`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_url: doc.source_url }),
+      })
+      if (!res.ok) throw new Error('Reindex failed')
+      await loadDocs()
+    } catch { /* ignore */ }
+    setWorking(null)
+  }
+
+  return (
+    <div className="space-y-4 max-w-2xl">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold">Documents</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Files indexed into LIMA memory for agent recall
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={working === 'upload'}>
+            {working === 'upload' ? 'Uploading…' : '+ Upload'}
+          </Button>
+          <Button variant="outline" size="sm" onClick={loadDocs}>
+            Refresh
+          </Button>
+        </div>
+      </div>
+      <input ref={fileInputRef} type="file" accept=".pdf,.docx,.txt,.md" className="hidden" onChange={handleUpload} />
+
+      {uploadError && <p className="text-xs text-destructive">{uploadError}</p>}
+
+      {loading ? (
+        <Spinner />
+      ) : docs.length === 0 ? (
+        <div className="rounded-lg border border-dashed px-6 py-10 text-center text-sm text-muted-foreground">
+          No documents indexed yet.<br />
+          <span className="text-xs">Upload a PDF, DOCX, TXT or MD file to let the agent search it.</span>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {docs.map(doc => (
+            <div key={doc.source_url} className="flex items-center gap-3 rounded-lg border bg-card px-4 py-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{doc.name}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {doc.chunks} chunks · indexed {new Date(doc.indexed).toLocaleDateString()}
+                </p>
+              </div>
+              <div className="flex gap-1 shrink-0">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs text-muted-foreground"
+                  onClick={() => handleReindex(doc)}
+                  disabled={working === doc.source_url + '-reindex'}
+                >
+                  {working === doc.source_url + '-reindex' ? 'Re-indexing…' : 'Reindex'}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+                  onClick={() => handleDelete(doc)}
+                  disabled={working === doc.source_url}
+                >
+                  {working === doc.source_url ? '…' : 'Delete'}
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

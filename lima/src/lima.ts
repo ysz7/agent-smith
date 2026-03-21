@@ -291,12 +291,41 @@ export class LimaMemory implements ILimaMemory {
       : path.resolve(filePath)
 
     const ext = path.extname(resolved).toLowerCase()
-    if (ext !== '.txt' && ext !== '.md') {
-      throw new Error(`Unsupported file type: ${ext}. Supported: .txt, .md`)
+    let text: string
+
+    if (ext === '.txt' || ext === '.md') {
+      text = await fsp.readFile(resolved, 'utf-8')
+    } else if (ext === '.pdf') {
+      const pdfMod = await import('pdf-parse')
+      const pdfParse = (pdfMod as any).default ?? pdfMod
+      const buffer = await fsp.readFile(resolved)
+      const data = await pdfParse(buffer)
+      text = data.text
+    } else if (ext === '.docx') {
+      const { default: mammoth } = await import('mammoth')
+      const result = await mammoth.extractRawText({ path: resolved })
+      text = result.value
+    } else {
+      throw new Error(`Unsupported file type: ${ext}. Supported: .txt, .md, .pdf, .docx`)
     }
 
-    const text = await fsp.readFile(resolved, 'utf-8')
     return this.ingestText(text, { ...options, source_url: resolved, source: 'document' })
+  }
+
+  async listDocuments(): Promise<{ source_url: string; name: string; chunks: number; indexed: string }[]> {
+    const rows = this.db.prepare(
+      `SELECT source_url, COUNT(*) as chunks, MIN(created) as indexed
+       FROM facts WHERE source = 'document' AND source_url IS NOT NULL
+       GROUP BY source_url ORDER BY indexed DESC`
+    ).all() as { source_url: string; chunks: number; indexed: string }[]
+    return rows.map(r => ({ ...r, name: path.basename(r.source_url) }))
+  }
+
+  async deleteDocument(sourceUrl: string): Promise<number> {
+    const result = this.db.prepare(
+      `DELETE FROM facts WHERE source_url = $source_url`
+    ).run({ source_url: sourceUrl })
+    return result.changes as number
   }
 
   async ingestURL(url: string, options?: IngestOptions & { depth?: number }): Promise<number> {
@@ -471,6 +500,51 @@ export class LimaMemory implements ILimaMemory {
     return count
   }
 
+  async searchDocuments(query: string, limit = 8): Promise<{ content: string; source: string; chunk_index?: number }[]> {
+    const tags = extractTags(query)
+    if (tags.length === 0) {
+      // fallback: return most recent document facts
+      const rows = this.db.prepare(
+        `SELECT content, source_url, chunk_index FROM facts WHERE source = 'document' ORDER BY last_used DESC LIMIT $limit`
+      ).all({ limit }) as { content: string; source_url: string; chunk_index: number | null }[]
+      return rows.map(r => ({
+        content: r.content,
+        source: r.source_url ? path.basename(r.source_url) : 'unknown',
+        chunk_index: r.chunk_index ?? undefined,
+      }))
+    }
+
+    const scored = new Map<string, number>()
+    const stmt = this.db.prepare(
+      `SELECT f.id FROM facts f
+       JOIN facts_fts fts ON fts.id = f.id
+       WHERE f.source = 'document' AND fts.tags MATCH $tag`
+    )
+    for (const tag of tags) {
+      const rows = stmt.all({ tag }) as { id: string }[]
+      for (const r of rows) scored.set(r.id, (scored.get(r.id) ?? 0) + 1)
+    }
+
+    const topIds = [...scored.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limit)
+      .map(([id]) => id)
+
+    if (topIds.length === 0) return []
+
+    const placeholders = topIds.map((_, i) => `$id${i}`).join(',')
+    const idParams = Object.fromEntries(topIds.map((id, i) => [`id${i}`, id]))
+    const rows = this.db.prepare(
+      `SELECT content, source_url, chunk_index FROM facts WHERE id IN (${placeholders})`
+    ).all(idParams) as { content: string; source_url: string | null; chunk_index: number | null }[]
+
+    return rows.map(r => ({
+      content: r.content,
+      source: r.source_url ? path.basename(r.source_url) : 'unknown',
+      chunk_index: r.chunk_index ?? undefined,
+    }))
+  }
+
   private buildContextBlock(profile: Fact[], task: TaskFact | null, recalled: Fact[]): string {
     const lines: string[] = []
 
@@ -497,7 +571,14 @@ export class LimaMemory implements ILimaMemory {
       }
       for (const [scope, facts] of Object.entries(byScope)) {
         lines.push(`[${scope}]`)
-        for (const f of facts) lines.push(`  ${f.summary_en}`)
+        for (const f of facts) {
+          // For document chunks, show the source filename so agent can cite it
+          if (f.source === 'document' && f.source_url) {
+            lines.push(`  [doc:${path.basename(f.source_url)}] ${f.summary_en}`)
+          } else {
+            lines.push(`  ${f.summary_en}`)
+          }
+        }
       }
     }
 

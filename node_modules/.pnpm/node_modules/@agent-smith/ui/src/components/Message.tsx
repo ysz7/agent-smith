@@ -1,4 +1,5 @@
 import ReactMarkdown from 'react-markdown'
+import { Paperclip } from 'lucide-react'
 import type { ChatMessage } from '@/store/chat'
 import { cn } from '@/lib/utils'
 
@@ -13,7 +14,15 @@ export default function Message({ message }: MessageProps) {
     return (
       <div className="flex justify-end">
         <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-secondary px-4 py-2.5 text-sm text-secondary-foreground">
-          <p className="whitespace-pre-wrap leading-relaxed text-base">{message.content}</p>
+          {message.attachmentName && (
+            <div className="mb-2 flex items-center gap-1.5 rounded-lg bg-black/10 dark:bg-white/10 px-2.5 py-1.5 text-xs">
+              <Paperclip className="h-3 w-3 shrink-0 opacity-70" />
+              <span className="truncate opacity-80">{message.attachmentName}</span>
+            </div>
+          )}
+          {message.content && (
+            <p className="whitespace-pre-wrap leading-relaxed text-base">{message.content}</p>
+          )}
           <p className="mt-1 text-right text-[10px] text-muted-foreground">
             {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </p>

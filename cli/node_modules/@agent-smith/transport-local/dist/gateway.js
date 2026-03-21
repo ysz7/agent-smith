@@ -45,6 +45,7 @@ const os = __importStar(require("os"));
 const fs = __importStar(require("fs"));
 const fsp = __importStar(require("fs/promises"));
 const crypto_1 = require("crypto");
+const multer_1 = __importDefault(require("multer"));
 class LocalGateway {
     port;
     configManager;
@@ -53,6 +54,7 @@ class LocalGateway {
     server = (0, http_1.createServer)(this.app);
     wss = new ws_1.WebSocketServer({ server: this.server });
     connections = new Map();
+    abortControllers = new Map();
     messageHandler;
     userSkillsDir;
     skillsProvider;
@@ -61,6 +63,7 @@ class LocalGateway {
     stylesProvider;
     setStyleHandler;
     lima;
+    documentsDir;
     constructor(port, configManager, uiDir, userSkillsDir) {
         this.port = port;
         this.configManager = configManager;
@@ -105,6 +108,9 @@ class LocalGateway {
     setLima(lima) {
         this.lima = lima;
     }
+    setDocumentsDir(dir) {
+        this.documentsDir = dir;
+    }
     start(hostname = '127.0.0.1') {
         this.server.on('error', (err) => {
             if (err.code === 'EADDRINUSE') {
@@ -148,7 +154,7 @@ class LocalGateway {
                 res.status(500).json({ error: 'Failed to save config' });
             }
         });
-        // POST /api/config/apikey — save API key securely
+        // POST /api/config/apikey — save Anthropic API key (legacy)
         this.app.post('/api/config/apikey', async (req, res) => {
             try {
                 const { apiKey } = req.body;
@@ -157,6 +163,29 @@ class LocalGateway {
                     return;
                 }
                 await this.configManager.setApiKey(apiKey.trim());
+                res.json({ ok: true });
+            }
+            catch {
+                res.status(500).json({ error: 'Failed to save API key' });
+            }
+        });
+        // POST /api/config/apikeys/:provider — save API key for a specific provider
+        this.app.post('/api/config/apikeys/:provider', async (req, res) => {
+            try {
+                const { provider } = req.params;
+                const { apiKey } = req.body;
+                if (typeof apiKey !== 'string') {
+                    res.status(400).json({ error: 'apiKey is required' });
+                    return;
+                }
+                const value = apiKey.trim();
+                // Also sync legacy apiKey for anthropic
+                if (provider === 'anthropic' && value) {
+                    await this.configManager.setApiKey(value);
+                }
+                else {
+                    await this.configManager.save({ apiKeys: { [provider]: value || undefined } });
+                }
                 res.json({ ok: true });
             }
             catch {
@@ -519,6 +548,112 @@ class LocalGateway {
                 res.status(500).json({ error: 'Reset failed' });
             }
         });
+        // POST /api/documents/upload — upload and index a document
+        this.app.post('/api/documents/upload', (req, res) => {
+            if (!this.lima || !this.documentsDir) {
+                res.status(503).json({ error: 'Documents not configured' });
+                return;
+            }
+            const storage = multer_1.default.diskStorage({
+                destination: (_req, _file, cb) => cb(null, this.documentsDir),
+                filename: (_req, file, cb) => {
+                    const ext = path.extname(file.originalname);
+                    const base = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9._-]/g, '_');
+                    cb(null, `${base}-${Date.now()}${ext}`);
+                },
+            });
+            const upload = (0, multer_1.default)({
+                storage,
+                limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+                fileFilter: (_req, file, cb) => {
+                    const allowed = ['.pdf', '.docx', '.txt', '.md'];
+                    const ext = path.extname(file.originalname).toLowerCase();
+                    cb(null, allowed.includes(ext));
+                },
+            }).single('file');
+            upload(req, res, async (err) => {
+                if (err) {
+                    res.status(400).json({ error: err.message });
+                    return;
+                }
+                if (!req.file) {
+                    res.status(400).json({ error: 'No file or unsupported format (allowed: PDF, DOCX, TXT, MD)' });
+                    return;
+                }
+                try {
+                    const chunks = await this.lima.ingestFile(req.file.path);
+                    res.json({
+                        ok: true,
+                        name: req.file.originalname,
+                        savedAs: req.file.filename,
+                        path: req.file.path,
+                        chunks,
+                    });
+                }
+                catch (ingestErr) {
+                    await fsp.unlink(req.file.path).catch(() => { });
+                    res.status(500).json({ error: ingestErr?.message ?? 'Ingestion failed' });
+                }
+            });
+        });
+        // GET /api/documents — list indexed documents
+        this.app.get('/api/documents', async (_req, res) => {
+            if (!this.lima) {
+                res.json([]);
+                return;
+            }
+            try {
+                const docs = this.lima.listDocuments ? await this.lima.listDocuments() : [];
+                res.json(docs);
+            }
+            catch {
+                res.status(500).json({ error: 'Failed to list documents' });
+            }
+        });
+        // DELETE /api/documents — delete document facts + file (body: { source_url })
+        this.app.delete('/api/documents', async (req, res) => {
+            if (!this.lima) {
+                res.status(503).json({ error: 'Memory not available' });
+                return;
+            }
+            try {
+                const { source_url } = req.body ?? {};
+                if (!source_url) {
+                    res.status(400).json({ error: 'source_url required' });
+                    return;
+                }
+                const deleted = this.lima.deleteDocument ? await this.lima.deleteDocument(source_url) : 0;
+                // Delete physical file if it lives in our documents dir
+                if (this.documentsDir && source_url.startsWith(this.documentsDir)) {
+                    await fsp.unlink(source_url).catch(() => { });
+                }
+                res.json({ ok: true, deleted });
+            }
+            catch {
+                res.status(500).json({ error: 'Failed to delete document' });
+            }
+        });
+        // POST /api/documents/reindex — re-ingest a document (body: { source_url })
+        this.app.post('/api/documents/reindex', async (req, res) => {
+            if (!this.lima) {
+                res.status(503).json({ error: 'Memory not available' });
+                return;
+            }
+            try {
+                const { source_url } = req.body ?? {};
+                if (!source_url) {
+                    res.status(400).json({ error: 'source_url required' });
+                    return;
+                }
+                if (this.lima.deleteDocument)
+                    await this.lima.deleteDocument(source_url);
+                const chunks = await this.lima.ingestFile(source_url);
+                res.json({ ok: true, chunks });
+            }
+            catch (err) {
+                res.status(500).json({ error: err?.message ?? 'Re-index failed' });
+            }
+        });
         // SPA catch-all — serve index.html for unknown routes
         if (this.uiDir && fs.existsSync(this.uiDir)) {
             this.app.get('*', (_req, res) => {
@@ -545,18 +680,28 @@ class LocalGateway {
             ws.on('message', (data) => {
                 try {
                     const msg = JSON.parse(data.toString());
+                    if (msg.type === 'stop') {
+                        this.abortControllers.get(connectionId)?.abort();
+                        return;
+                    }
+                    const controller = new AbortController();
+                    this.abortControllers.set(connectionId, controller);
                     this.messageHandler?.({
                         connectionId,
                         type: msg.type ?? 'message',
                         content: msg.content ?? '',
                         agentId: msg.agentId,
+                        signal: controller.signal,
                     });
                 }
                 catch {
                     // Invalid JSON — ignore silently
                 }
             });
-            ws.on('close', () => this.connections.delete(connectionId));
+            ws.on('close', () => {
+                this.connections.delete(connectionId);
+                this.abortControllers.delete(connectionId);
+            });
             ws.on('error', () => this.connections.delete(connectionId));
         });
     }
