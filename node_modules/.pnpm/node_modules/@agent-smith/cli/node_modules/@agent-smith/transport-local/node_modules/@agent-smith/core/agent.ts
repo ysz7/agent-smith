@@ -188,8 +188,9 @@ export class AgentSmith {
     }
 
     // LIMA: recall relevant long-term facts and inject as context block
+    const limaEnabled = this.config.performance?.limaEnabled !== false
     let limaContext = ''
-    if (this.lima) {
+    if (this.lima && limaEnabled) {
       try {
         const result = await this.lima.recall(msg.content)
         if (result.contextBlock) limaContext = result.contextBlock
@@ -207,7 +208,7 @@ export class AgentSmith {
       }
 
       // LIMA: run decay after response to age out stale activations
-      if (this.lima && response.trim()) {
+      if (this.lima && limaEnabled && response.trim()) {
         this.lima.decay().catch(() => {})
       }
     } catch (err: any) {
@@ -238,10 +239,6 @@ export class AgentSmith {
     const cachingEnabled = this.config.performance?.promptCaching !== false
     const useAnthropicCache = provider === 'anthropic' && cachingEnabled
 
-    const systemWithContext = limaContext
-      ? `${this.systemPrompt}\n\n[Long-term memory]\n${limaContext}`
-      : this.systemPrompt
-
     // Build tool definitions — for Anthropic caching, mark last tool with cache_control
     const toolDefs = this.tools.map((t, i) => ({
       name: t.name,
@@ -252,19 +249,26 @@ export class AgentSmith {
         : {}),
     }))
 
+    // Inject LIMA context as a user message prefix so the system prompt stays
+    // stable across requests and Anthropic prompt caching is not invalidated.
+    // Only prepend on depth 0 — tool-call continuations already have it in messages.
+    const messagesWithContext = (limaContext && depth === 0)
+      ? [{ role: 'user' as const, content: `[Long-term memory]\n${limaContext}\n\n---` }, ...messages]
+      : messages
+
     const stream = useAnthropicCache
       ? this.client.beta.promptCaching.messages.stream({
           model: this.config.agent.model,
           max_tokens: 4096,
-          system: [{ type: 'text', text: systemWithContext, cache_control: { type: 'ephemeral' } }],
-          messages,
+          system: [{ type: 'text', text: this.systemPrompt, cache_control: { type: 'ephemeral' } }],
+          messages: messagesWithContext,
           ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
         })
       : this.client.messages.stream({
           model: this.config.agent.model,
           max_tokens: 4096,
-          system: systemWithContext,
-          messages,
+          system: this.systemPrompt,
+          messages: messagesWithContext,
           ...(toolDefs.length > 0 ? { tools: toolDefs as any } : {}),
         })
 
@@ -321,7 +325,7 @@ export class AgentSmith {
           })
 
           // Extract Pattern: store compact working fact after each tool call
-          if (this.lima && resultStr.length >= 50) {
+          if (this.lima && limaEnabled && resultStr.length >= 50) {
             const snippet = resultStr.slice(0, 300)
             this.lima.store({
               content: `[${block.name}] ${snippet}`,

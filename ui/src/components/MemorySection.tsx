@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { useChatStore } from '@/store/chat'
+import { useConfigStore } from '@/store/config'
 
 const API = import.meta.env.DEV ? 'http://localhost:3000' : ''
 
@@ -48,6 +50,12 @@ export default function MemorySection() {
   const [resettingFacts, setResettingFacts] = useState(false)
   const importRef = useRef<HTMLInputElement>(null)
   const clearMessages = useChatStore(s => s.clearMessages)
+  const { config, updateConfig } = useConfigStore()
+  const limaEnabled = config?.performance?.limaEnabled !== false
+
+  const toggleLima = async (val: boolean) => {
+    await updateConfig({ performance: { ...config?.performance, limaEnabled: val } as any })
+  }
 
   const loadStats = useCallback(async () => {
     try {
@@ -169,6 +177,15 @@ export default function MemorySection() {
           </Button>
           <input ref={importRef} type="file" accept=".json" className="hidden" onChange={handleImport} />
         </div>
+      </div>
+
+      {/* Enable toggle */}
+      <div className="flex items-center justify-between rounded-lg border bg-card px-4 py-3">
+        <div>
+          <p className="text-sm font-medium">Long-term memory</p>
+          <p className="text-xs text-muted-foreground">Recall and store facts across sessions. Disable to save tokens.</p>
+        </div>
+        <Switch checked={limaEnabled} onCheckedChange={toggleLima} />
       </div>
 
       {/* Scope stats */}

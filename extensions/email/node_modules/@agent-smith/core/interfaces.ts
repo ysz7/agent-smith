@@ -162,6 +162,7 @@ export interface AgentConfig {
     historyWindow: number
     smartCompress: boolean
     promptCaching: boolean
+    limaEnabled: boolean
   }
   system?: {
     preventSleep: boolean

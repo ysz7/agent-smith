@@ -76,13 +76,18 @@ export default function Onboarding() {
                   type="button"
                   onClick={() => setProvider(p.id)}
                   className={cn(
-                    'flex items-center justify-between rounded-lg border px-3 py-2 text-sm transition-colors text-left',
+                    'relative flex items-center justify-between rounded-lg border px-3 py-2 text-sm transition-colors text-left',
                     provider === p.id
                       ? 'border-foreground bg-secondary text-foreground font-medium'
                       : 'border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground',
                   )}
                 >
                   <span>{p.name}</span>
+                  {p.id === 'anthropic' && (
+                    <span className="absolute -top-1.5 right-1.5 rounded-full bg-green-600 px-1 py-px text-[8px] font-medium text-white leading-none">
+                      recommended
+                    </span>
+                  )}
                   {p.local && (
                     <span className="text-[10px] text-green-600 dark:text-green-500 font-normal">local</span>
                   )}
@@ -128,6 +133,13 @@ export default function Onboarding() {
                 </button>
               </div>
               {error && <p className="text-xs text-destructive">{error}</p>}
+              {provider === 'anthropic' && !error && (
+                <p className="text-xs text-muted-foreground">
+                  💡 Using{' '}
+                  <span className="font-medium text-foreground">Claude Code</span>? Your key is at{' '}
+                  <code className="rounded bg-muted px-1 py-0.5 text-[11px]">~/.claude/.credentials.json</code>
+                </p>
+              )}
             </div>
           )}
 

@@ -19,7 +19,7 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'skills', label: 'Skills' },
   { id: 'extensions', label: 'Extensions' },
   { id: 'system', label: 'System' },
-  { id: 'memory', label: 'Memory' },
+  { id: 'memory', label: 'Memory / Chat' },
   { id: 'documents', label: 'Documents' },
 ]
 
