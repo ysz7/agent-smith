@@ -7,17 +7,16 @@ interface StateCfg {
   speed: number
   radius: number
   glow: number
-  pulse: boolean
   wobble: number
   swirl: number
 }
 
 const STATES: Record<AgentState, StateCfg> = {
-  idle:      { color: "#00ffaa", speed: 0.3, radius: 1.0,  glow: 8,  pulse: false, wobble: 0.004, swirl: 0.0  },
-  listening: { color: "#00cfff", speed: 0.7, radius: 1.1,  glow: 14, pulse: true,  wobble: 0.012, swirl: 0.0  },
-  thinking:  { color: "#bf00ff", speed: 1.6, radius: 1.2,  glow: 20, pulse: true,  wobble: 0.012, swirl: 0.018 },
-  speaking:  { color: "#ffaa00", speed: 0.9, radius: 1.05, glow: 16, pulse: true,  wobble: 0.012, swirl: 0.0  },
-  error:     { color: "#ff3333", speed: 0.2, radius: 0.9,  glow: 10, pulse: false, wobble: 0.004, swirl: 0.0  },
+  idle:      { color: "#00ffaa", speed: 0.3, radius: 1.0,  glow: 8,  wobble: 0.004, swirl: 0.0   },
+  listening: { color: "#00cfff", speed: 0.7, radius: 1.1,  glow: 14, wobble: 0.012, swirl: 0.0   },
+  thinking:  { color: "#bf00ff", speed: 1.6, radius: 1.2,  glow: 20, wobble: 0.012, swirl: 0.018 },
+  speaking:  { color: "#ffaa00", speed: 1.4, radius: 1.05, glow: 20, wobble: 0.020, swirl: 0.007 },
+  error:     { color: "#ff3333", speed: 0.2, radius: 0.9,  glow: 10, wobble: 0.004, swirl: 0.0   },
 }
 
 // Interpolated render config — all numeric fields lerped each frame
@@ -28,7 +27,7 @@ interface RenderCfg {
   glow: number
   wobble: number
   swirl: number
-  alphaMult: number  // 0.6 for error, 0.85 otherwise
+  alphaMult: number
 }
 
 const LERP_SPEED = 3.0  // higher = faster transition
@@ -77,18 +76,19 @@ function getMannequinPoints(count = 900): Particle[] {
     added++
   }
 
-  // ── Neck (narrow rectangle) ──────────────────────────
+  // ── Neck ─────────────────────────────────────────────
+  // Top overlaps chin (-0.28), bottom overlaps shoulders (-0.42)
   added = 0
   while (added < count * 0.10) {
-    pts.push({ x: rand(-0.09, 0.09), y: rand(-0.42, -0.28), zone: "neck" })
+    pts.push({ x: rand(-0.13, 0.13), y: rand(-0.42, -0.28), zone: "neck" })
     added++
   }
 
   // ── Shoulders (trapezoid base) ────────────────────────
   added = 0
   while (added < count * 0.08) {
-    const y = rand(-0.56, -0.44)
-    const halfW = 0.09 + 0.35 * (1 - (y + 0.56) / 0.12)
+    const y = rand(-0.56, -0.40)
+    const halfW = 0.09 + 0.35 * (1 - (y + 0.56) / 0.16)
     pts.push({ x: rand(-halfW, halfW), y, zone: "shoulder" })
     added++
   }
@@ -255,21 +255,20 @@ export default function SmithAvatar({ agentState = "idle", size = 380 }: SmithAv
       const rc     = renderRef.current!
       const k      = dt > 0 ? 1 - Math.exp(-LERP_SPEED * dt) : 0
 
-      rc.r         += (tRgb.r    - rc.r)         * k
-      rc.g         += (tRgb.g    - rc.g)         * k
-      rc.b         += (tRgb.b    - rc.b)         * k
-      rc.speed     += (target.speed    - rc.speed)     * k
-      rc.radius    += (target.radius   - rc.radius)    * k
-      rc.glow      += (target.glow     - rc.glow)      * k
-      rc.wobble    += (target.wobble   - rc.wobble)    * k
-      rc.swirl     += (target.swirl    - rc.swirl)     * k
-      rc.alphaMult += (tAlpha          - rc.alphaMult) * k
+      rc.r         += (tRgb.r       - rc.r)         * k
+      rc.g         += (tRgb.g       - rc.g)         * k
+      rc.b         += (tRgb.b       - rc.b)         * k
+      rc.speed     += (target.speed  - rc.speed)     * k
+      rc.radius    += (target.radius - rc.radius)    * k
+      rc.glow      += (target.glow   - rc.glow)      * k
+      rc.wobble    += (target.wobble - rc.wobble)    * k
+      rc.swirl     += (target.swirl  - rc.swirl)     * k
+      rc.alphaMult += (tAlpha        - rc.alphaMult) * k
 
       const { r, g, b, speed, radius, glow, wobble, swirl, alphaMult } = rc
 
       ctx.clearRect(0, 0, W, H)
 
-      // ── Particles ────────────────────────────────────
       const scale = W * 0.79 * radius
 
       const zoneBright: Record<string, number> = {
