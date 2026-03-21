@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useConfigStore } from '@/store/config'
 import SkillCard from '@/components/SkillCard'
 import ExtensionCard from '@/components/ExtensionCard'
+import MemorySection from '@/components/MemorySection'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,7 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 
-type Section = 'general' | 'security' | 'performance' | 'skills' | 'extensions' | 'system'
+type Section = 'general' | 'security' | 'performance' | 'skills' | 'extensions' | 'system' | 'memory'
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'general', label: 'General' },
@@ -18,6 +19,7 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'skills', label: 'Skills' },
   { id: 'extensions', label: 'Extensions' },
   { id: 'system', label: 'System' },
+  { id: 'memory', label: 'Memory' },
 ]
 
 export default function Settings() {
@@ -57,6 +59,7 @@ export default function Settings() {
         {section === 'skills' && <SkillsSection />}
         {section === 'extensions' && <ExtensionsSection />}
         {section === 'system' && <SystemSection config={config} updateConfig={updateConfig} />}
+        {section === 'memory' && <MemorySection />}
       </div>
     </div>
   )

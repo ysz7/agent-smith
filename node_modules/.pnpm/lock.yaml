@@ -17,6 +17,9 @@ importers:
       '@agent-smith/core':
         specifier: workspace:*
         version: link:../core
+      '@agent-smith/lima':
+        specifier: workspace:*
+        version: link:../lima
       '@agent-smith/transport-local':
         specifier: workspace:*
         version: link:../transport/local
@@ -33,6 +36,9 @@ importers:
 
   core:
     dependencies:
+      '@agent-smith/lima':
+        specifier: workspace:*
+        version: link:../lima
       '@anthropic-ai/sdk':
         specifier: ^0.30.0
         version: 0.30.1
@@ -197,11 +203,30 @@ importers:
         specifier: ^5.5.0
         version: 5.9.3
 
+  lima:
+    dependencies:
+      axios:
+        specifier: ^1.7.0
+        version: 1.13.6
+      cheerio:
+        specifier: ^1.0.0
+        version: 1.2.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+
   transport/local:
     dependencies:
       '@agent-smith/core':
         specifier: workspace:*
         version: link:../../core
+      '@agent-smith/lima':
+        specifier: workspace:*
+        version: link:../../lima
       express:
         specifier: ^4.19.0
         version: 4.22.1

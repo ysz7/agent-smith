@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@agent-smith/core": "workspace:*",
+    "@agent-smith/lima": "workspace:*",
     "@agent-smith/transport-local": "workspace:*"
   },
   "devDependencies": {

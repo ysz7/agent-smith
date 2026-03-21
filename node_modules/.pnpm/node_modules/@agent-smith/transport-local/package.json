@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@agent-smith/core": "workspace:*",
+    "@agent-smith/lima": "workspace:*",
     "express": "^4.19.0",
     "node-cron": "^3.0.3",
     "ws": "^8.18.0"

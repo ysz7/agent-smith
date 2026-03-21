@@ -2,10 +2,12 @@ import express from 'express'
 import { createServer } from 'http'
 import { WebSocketServer, WebSocket } from 'ws'
 import * as path from 'path'
+import * as os from 'os'
 import * as fs from 'fs'
 import * as fsp from 'fs/promises'
 import { randomUUID } from 'crypto'
 import type { ITransport, IConfigManager, IncomingMessage, OutgoingMessage } from '@agent-smith/core'
+import type { ILimaMemory } from '@agent-smith/lima'
 
 export class LocalGateway implements ITransport {
   private app = express()
@@ -19,6 +21,7 @@ export class LocalGateway implements ITransport {
   private historyProvider?: () => Promise<{ id: string; role: string; content: string; timestamp: string }[]>
   private stylesProvider?: () => Promise<{ name: string; description: string }[]>
   private setStyleHandler?: (name: string) => Promise<void>
+  private lima?: ILimaMemory
 
   constructor(
     private port: number,
@@ -70,6 +73,10 @@ export class LocalGateway implements ITransport {
 
   setSetStyleHandler(fn: (name: string) => Promise<void>): void {
     this.setStyleHandler = fn
+  }
+
+  setLima(lima: ILimaMemory): void {
+    this.lima = lima
   }
 
   start(hostname = '127.0.0.1'): void {
@@ -344,6 +351,117 @@ export class LocalGateway implements ITransport {
         }
       } catch (err: any) {
         res.status(500).json({ error: err?.message ?? 'Failed to install skill' })
+      }
+    })
+
+    // GET /api/memory — list facts (query: scope, source, limit)
+    this.app.get('/api/memory', async (req, res) => {
+      if (!this.lima) { res.json([]); return }
+      try {
+        const { scope, source, limit } = req.query as Record<string, string>
+        const facts = await this.lima.listMemory({
+          scope: scope as any ?? undefined,
+          source: source as any ?? undefined,
+          limit: limit ? parseInt(limit, 10) : 50,
+        })
+        res.json(facts)
+      } catch {
+        res.status(500).json({ error: 'Failed to load memory' })
+      }
+    })
+
+    // GET /api/memory/stats — memory statistics
+    this.app.get('/api/memory/stats', async (_req, res) => {
+      if (!this.lima) { res.json({ total: 0, byScope: {}, bySource: {}, dbSizeBytes: 0 }); return }
+      try {
+        const stats = this.lima.stats ? await this.lima.stats() : { total: 0, byScope: {}, bySource: {}, dbSizeBytes: 0 }
+        res.json(stats)
+      } catch {
+        res.status(500).json({ error: 'Failed to load stats' })
+      }
+    })
+
+    // GET /api/memory/export — export all facts as JSON file
+    this.app.get('/api/memory/export', async (_req, res) => {
+      if (!this.lima || !this.lima.export) { res.status(503).json({ error: 'Export not available' }); return }
+      try {
+        const tmpPath = path.join(os.tmpdir(), `lima-export-${Date.now()}.json`)
+        await this.lima.export(tmpPath)
+        res.download(tmpPath, 'memory-export.json', () => {
+          fsp.unlink(tmpPath).catch(() => {})
+        })
+      } catch {
+        res.status(500).json({ error: 'Export failed' })
+      }
+    })
+
+    // POST /api/memory/import — import facts from JSON
+    this.app.post('/api/memory/import', async (req, res) => {
+      if (!this.lima || !this.lima.import) { res.status(503).json({ error: 'Import not available' }); return }
+      try {
+        const tmpPath = path.join(os.tmpdir(), `lima-import-${Date.now()}.json`)
+        await fsp.writeFile(tmpPath, JSON.stringify(req.body), 'utf-8')
+        const count = await this.lima.import(tmpPath)
+        await fsp.unlink(tmpPath).catch(() => {})
+        res.json({ ok: true, imported: count })
+      } catch {
+        res.status(500).json({ error: 'Import failed' })
+      }
+    })
+
+    // DELETE /api/memory/:id — delete a single fact
+    this.app.delete('/api/memory/:id', async (req, res) => {
+      if (!this.lima) { res.status(503).json({ error: 'Memory not available' }); return }
+      try {
+        const deleted = await this.lima.deleteMemory(req.params.id)
+        res.json({ ok: true, deleted })
+      } catch {
+        res.status(500).json({ error: 'Failed to delete fact' })
+      }
+    })
+
+    // DELETE /api/memory — bulk delete by filter (body: { scope?, source? })
+    this.app.delete('/api/memory', async (req, res) => {
+      if (!this.lima) { res.status(503).json({ error: 'Memory not available' }); return }
+      try {
+        const { scope, source } = req.body ?? {}
+        const deleted = await this.lima.deleteMemory({ scope, source })
+        res.json({ ok: true, deleted })
+      } catch {
+        res.status(500).json({ error: 'Failed to delete memory' })
+      }
+    })
+
+    // POST /api/memory/reset — wipe all facts AND conversation history
+    this.app.post('/api/memory/reset', async (_req, res) => {
+      if (!this.lima) { res.status(503).json({ error: 'Memory not available' }); return }
+      try {
+        if (this.lima.resetAll) await this.lima.resetAll()
+        res.json({ ok: true })
+      } catch {
+        res.status(500).json({ error: 'Reset failed' })
+      }
+    })
+
+    // POST /api/memory/reset-history — wipe only conversation history
+    this.app.post('/api/memory/reset-history', async (_req, res) => {
+      if (!this.lima) { res.status(503).json({ error: 'Memory not available' }); return }
+      try {
+        if (this.lima.resetHistory) await this.lima.resetHistory()
+        res.json({ ok: true })
+      } catch {
+        res.status(500).json({ error: 'Reset failed' })
+      }
+    })
+
+    // POST /api/memory/reset-facts — wipe only LIMA facts
+    this.app.post('/api/memory/reset-facts', async (_req, res) => {
+      if (!this.lima) { res.status(503).json({ error: 'Memory not available' }); return }
+      try {
+        if (this.lima.resetFacts) await this.lima.resetFacts()
+        res.json({ ok: true })
+      } catch {
+        res.status(500).json({ error: 'Reset failed' })
       }
     })
 

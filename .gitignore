@@ -12,9 +12,6 @@ dist/
 .env.*
 !.env.example
 
-# User data
-~/.agent-smith/
-
 # OS
 .DS_Store
 Thumbs.db
@@ -24,6 +21,9 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Claude Code
+.claude/
 
 # Logs
 *.log

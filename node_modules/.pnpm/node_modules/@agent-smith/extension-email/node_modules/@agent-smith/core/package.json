@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
+    "@agent-smith/lima": "workspace:*",
     "chokidar": "^3.6.0",
     "gray-matter": "^4.0.3"
   },

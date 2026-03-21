@@ -50,6 +50,15 @@ export interface Message {
     timestamp: Date;
     agentId?: string;
 }
+export interface IHistory {
+    add(msg: Omit<Message, 'id' | 'timestamp'>): Promise<void>;
+    getRecent(count: number): Promise<Message[]>;
+    getAll(): Promise<Message[]>;
+    clear(): Promise<void>;
+    count(): Promise<number>;
+    needsCompression(threshold?: number): Promise<boolean>;
+    compressWithSummary(summary: string, keepRecentCount: number): Promise<void>;
+}
 export interface Skill {
     name: string;
     description: string;

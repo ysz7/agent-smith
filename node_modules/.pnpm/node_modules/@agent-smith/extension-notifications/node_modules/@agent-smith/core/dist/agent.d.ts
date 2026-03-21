@@ -1,4 +1,5 @@
-import type { IStorage, ITransport, IScheduler, IConfigManager, AgentConfig, Skill } from './interfaces';
+import type { IStorage, ITransport, IScheduler, IConfigManager, IHistory, AgentConfig, Skill } from './interfaces';
+import type { ILimaMemory } from '@agent-smith/lima';
 export declare class AgentSmith {
     private storage;
     private transport;
@@ -13,7 +14,8 @@ export declare class AgentSmith {
     private systemPrompt;
     private client;
     private auditLogPath;
-    constructor(storage: IStorage, transport: ITransport, scheduler: IScheduler, config: AgentConfig, skillDirs: string[], extensionDirs: string[], configManager?: IConfigManager | undefined, styleDirs?: string[]);
+    private lima;
+    constructor(storage: IStorage, transport: ITransport, scheduler: IScheduler, config: AgentConfig, skillDirs: string[], extensionDirs: string[], configManager?: IConfigManager | undefined, styleDirs?: string[], lima?: ILimaMemory, history?: IHistory);
     start(): Promise<void>;
     stop(): Promise<void>;
     getSkills(): Skill[];
@@ -30,6 +32,7 @@ export declare class AgentSmith {
     private buildSystemPrompt;
     private compress;
     private writeAuditLog;
+    private registerLimaTools;
     private registerTaskTools;
 }
 //# sourceMappingURL=agent.d.ts.map

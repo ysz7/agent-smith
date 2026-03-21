@@ -1,4 +1,5 @@
 import type { ITransport, IConfigManager, IncomingMessage, OutgoingMessage } from '@agent-smith/core';
+import type { ILimaMemory } from '@agent-smith/lima';
 export declare class LocalGateway implements ITransport {
     private port;
     private configManager;
@@ -14,6 +15,7 @@ export declare class LocalGateway implements ITransport {
     private historyProvider?;
     private stylesProvider?;
     private setStyleHandler?;
+    private lima?;
     constructor(port: number, configManager: IConfigManager, uiDir?: string | undefined, userSkillsDir?: string);
     onMessage(handler: (msg: IncomingMessage) => void): void;
     send(connectionId: string, message: OutgoingMessage): Promise<void>;
@@ -42,6 +44,7 @@ export declare class LocalGateway implements ITransport {
         description: string;
     }[]>): void;
     setSetStyleHandler(fn: (name: string) => Promise<void>): void;
+    setLima(lima: ILimaMemory): void;
     start(hostname?: string): void;
     private setupMiddleware;
     private setupRoutes;

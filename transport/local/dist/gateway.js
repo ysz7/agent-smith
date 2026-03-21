@@ -41,6 +41,7 @@ const express_1 = __importDefault(require("express"));
 const http_1 = require("http");
 const ws_1 = require("ws");
 const path = __importStar(require("path"));
+const os = __importStar(require("os"));
 const fs = __importStar(require("fs"));
 const fsp = __importStar(require("fs/promises"));
 const crypto_1 = require("crypto");
@@ -59,6 +60,7 @@ class LocalGateway {
     historyProvider;
     stylesProvider;
     setStyleHandler;
+    lima;
     constructor(port, configManager, uiDir, userSkillsDir) {
         this.port = port;
         this.configManager = configManager;
@@ -99,6 +101,9 @@ class LocalGateway {
     }
     setSetStyleHandler(fn) {
         this.setStyleHandler = fn;
+    }
+    setLima(lima) {
+        this.lima = lima;
     }
     start(hostname = '127.0.0.1') {
         this.server.on('error', (err) => {
@@ -371,6 +376,147 @@ class LocalGateway {
             }
             catch (err) {
                 res.status(500).json({ error: err?.message ?? 'Failed to install skill' });
+            }
+        });
+        // GET /api/memory — list facts (query: scope, source, limit)
+        this.app.get('/api/memory', async (req, res) => {
+            if (!this.lima) {
+                res.json([]);
+                return;
+            }
+            try {
+                const { scope, source, limit } = req.query;
+                const facts = await this.lima.listMemory({
+                    scope: scope ?? undefined,
+                    source: source ?? undefined,
+                    limit: limit ? parseInt(limit, 10) : 50,
+                });
+                res.json(facts);
+            }
+            catch {
+                res.status(500).json({ error: 'Failed to load memory' });
+            }
+        });
+        // GET /api/memory/stats — memory statistics
+        this.app.get('/api/memory/stats', async (_req, res) => {
+            if (!this.lima) {
+                res.json({ total: 0, byScope: {}, bySource: {}, dbSizeBytes: 0 });
+                return;
+            }
+            try {
+                const stats = this.lima.stats ? await this.lima.stats() : { total: 0, byScope: {}, bySource: {}, dbSizeBytes: 0 };
+                res.json(stats);
+            }
+            catch {
+                res.status(500).json({ error: 'Failed to load stats' });
+            }
+        });
+        // GET /api/memory/export — export all facts as JSON file
+        this.app.get('/api/memory/export', async (_req, res) => {
+            if (!this.lima || !this.lima.export) {
+                res.status(503).json({ error: 'Export not available' });
+                return;
+            }
+            try {
+                const tmpPath = path.join(os.tmpdir(), `lima-export-${Date.now()}.json`);
+                await this.lima.export(tmpPath);
+                res.download(tmpPath, 'memory-export.json', () => {
+                    fsp.unlink(tmpPath).catch(() => { });
+                });
+            }
+            catch {
+                res.status(500).json({ error: 'Export failed' });
+            }
+        });
+        // POST /api/memory/import — import facts from JSON
+        this.app.post('/api/memory/import', async (req, res) => {
+            if (!this.lima || !this.lima.import) {
+                res.status(503).json({ error: 'Import not available' });
+                return;
+            }
+            try {
+                const tmpPath = path.join(os.tmpdir(), `lima-import-${Date.now()}.json`);
+                await fsp.writeFile(tmpPath, JSON.stringify(req.body), 'utf-8');
+                const count = await this.lima.import(tmpPath);
+                await fsp.unlink(tmpPath).catch(() => { });
+                res.json({ ok: true, imported: count });
+            }
+            catch {
+                res.status(500).json({ error: 'Import failed' });
+            }
+        });
+        // DELETE /api/memory/:id — delete a single fact
+        this.app.delete('/api/memory/:id', async (req, res) => {
+            if (!this.lima) {
+                res.status(503).json({ error: 'Memory not available' });
+                return;
+            }
+            try {
+                const deleted = await this.lima.deleteMemory(req.params.id);
+                res.json({ ok: true, deleted });
+            }
+            catch {
+                res.status(500).json({ error: 'Failed to delete fact' });
+            }
+        });
+        // DELETE /api/memory — bulk delete by filter (body: { scope?, source? })
+        this.app.delete('/api/memory', async (req, res) => {
+            if (!this.lima) {
+                res.status(503).json({ error: 'Memory not available' });
+                return;
+            }
+            try {
+                const { scope, source } = req.body ?? {};
+                const deleted = await this.lima.deleteMemory({ scope, source });
+                res.json({ ok: true, deleted });
+            }
+            catch {
+                res.status(500).json({ error: 'Failed to delete memory' });
+            }
+        });
+        // POST /api/memory/reset — wipe all facts AND conversation history
+        this.app.post('/api/memory/reset', async (_req, res) => {
+            if (!this.lima) {
+                res.status(503).json({ error: 'Memory not available' });
+                return;
+            }
+            try {
+                if (this.lima.resetAll)
+                    await this.lima.resetAll();
+                res.json({ ok: true });
+            }
+            catch {
+                res.status(500).json({ error: 'Reset failed' });
+            }
+        });
+        // POST /api/memory/reset-history — wipe only conversation history
+        this.app.post('/api/memory/reset-history', async (_req, res) => {
+            if (!this.lima) {
+                res.status(503).json({ error: 'Memory not available' });
+                return;
+            }
+            try {
+                if (this.lima.resetHistory)
+                    await this.lima.resetHistory();
+                res.json({ ok: true });
+            }
+            catch {
+                res.status(500).json({ error: 'Reset failed' });
+            }
+        });
+        // POST /api/memory/reset-facts — wipe only LIMA facts
+        this.app.post('/api/memory/reset-facts', async (_req, res) => {
+            if (!this.lima) {
+                res.status(503).json({ error: 'Memory not available' });
+                return;
+            }
+            try {
+                if (this.lima.resetFacts)
+                    await this.lima.resetFacts();
+                res.json({ ok: true });
+            }
+            catch {
+                res.status(500).json({ error: 'Reset failed' });
             }
         });
         // SPA catch-all — serve index.html for unknown routes

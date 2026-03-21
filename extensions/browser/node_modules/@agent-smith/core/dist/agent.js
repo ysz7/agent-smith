@@ -69,18 +69,20 @@ class AgentSmith {
     systemPrompt = '';
     client;
     auditLogPath;
-    constructor(storage, transport, scheduler, config, skillDirs, extensionDirs, configManager, styleDirs = []) {
+    lima = null;
+    constructor(storage, transport, scheduler, config, skillDirs, extensionDirs, configManager, styleDirs = [], lima, history) {
         this.storage = storage;
         this.transport = transport;
         this.scheduler = scheduler;
         this.config = config;
         this.configManager = configManager;
-        this.memory = new memory_1.Memory(storage);
+        this.memory = history ?? new memory_1.Memory(storage);
         this.skillLoader = new skill_loader_1.SkillLoader(config, skillDirs);
         this.extensionLoader = new extension_loader_1.ExtensionLoader(config, storage, extensionDirs);
         this.styleLoader = new style_loader_1.StyleLoader(styleDirs);
         this.client = new sdk_1.default({ apiKey: config.apiKey });
         this.auditLogPath = path.join(os.homedir(), '.agent-smith', 'audit.log');
+        this.lima = lima ?? null;
     }
     async start() {
         // 1. Load extensions and collect their tools
@@ -102,6 +104,10 @@ class AgentSmith {
         // 5. Register task management tools if configManager is available
         if (this.configManager) {
             this.registerTaskTools(this.configManager);
+        }
+        // 5b. Register LIMA memory tools if available
+        if (this.lima) {
+            this.registerLimaTools(this.lima);
         }
         // 6. Start listening for incoming messages
         this.transport.onMessage(async (msg) => {
@@ -179,11 +185,27 @@ class AgentSmith {
         if (messages.length === 0) {
             messages.push({ role: 'user', content: msg.content });
         }
+        // LIMA: recall relevant long-term facts and inject as context block
+        let limaContext = '';
+        if (this.lima) {
+            try {
+                const result = await this.lima.recall(msg.content);
+                if (result.contextBlock)
+                    limaContext = result.contextBlock;
+            }
+            catch {
+                // LIMA failure is non-fatal
+            }
+        }
         try {
             await this.transport.send(msg.connectionId, { type: 'stream_start' });
-            const response = await this.thinkStream(msg.connectionId, messages);
+            const response = await this.thinkStream(msg.connectionId, messages, 0, limaContext);
             await this.transport.send(msg.connectionId, { type: 'stream_end' });
             await this.memory.add({ role: 'assistant', content: response });
+            // LIMA: run decay after response to age out stale activations
+            if (this.lima) {
+                this.lima.decay().catch(() => { });
+            }
         }
         catch (err) {
             await this.transport.send(msg.connectionId, { type: 'stream_end' });
@@ -194,7 +216,7 @@ class AgentSmith {
         }
     }
     // Streaming version of think — sends chunks via transport
-    async thinkStream(connectionId, messages, depth = 0) {
+    async thinkStream(connectionId, messages, depth = 0, limaContext = '') {
         if (depth > 5)
             return 'Maximum tool call depth reached.';
         // Audit log
@@ -206,10 +228,13 @@ class AgentSmith {
             description: t.description,
             input_schema: { type: 'object', ...t.parameters },
         }));
+        const systemWithContext = limaContext
+            ? `${this.systemPrompt}\n\n[Long-term memory]\n${limaContext}`
+            : this.systemPrompt;
         const stream = this.client.messages.stream({
             model: this.config.agent.model,
             max_tokens: 4096,
-            system: this.systemPrompt,
+            system: systemWithContext,
             messages,
             ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
         });
@@ -238,11 +263,21 @@ class AgentSmith {
                 }
                 try {
                     const result = await tool.run(block.input);
+                    const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
                     toolResults.push({
                         type: 'tool_result',
                         tool_use_id: block.id,
-                        content: typeof result === 'string' ? result : JSON.stringify(result),
+                        content: resultStr,
                     });
+                    // Extract Pattern: store compact working fact after each tool call
+                    if (this.lima && resultStr.length >= 50) {
+                        const snippet = resultStr.slice(0, 300);
+                        this.lima.store({
+                            content: `[${block.name}] ${snippet}`,
+                            scope: 'working',
+                            source: 'agent',
+                        }).catch(() => { });
+                    }
                 }
                 catch (err) {
                     toolResults.push({
@@ -258,7 +293,7 @@ class AgentSmith {
                 { role: 'assistant', content: finalMessage.content },
                 { role: 'user', content: toolResults },
             ];
-            const continuation = await this.thinkStream(connectionId, nextMessages, depth + 1);
+            const continuation = await this.thinkStream(connectionId, nextMessages, depth + 1, limaContext);
             fullText += continuation;
         }
         return fullText;
@@ -429,6 +464,53 @@ class AgentSmith {
         catch {
             // Audit log failure is non-fatal
         }
+    }
+    registerLimaTools(lima) {
+        this.tools.push({
+            name: 'memory_store',
+            description: 'Store a fact in long-term memory. Use scope "profile" for user preferences/identity, "knowledge" for reference data, "working" for session findings.',
+            parameters: {
+                properties: {
+                    content: { type: 'string', description: 'The fact to remember' },
+                    scope: { type: 'string', enum: ['profile', 'knowledge', 'working'], description: 'Memory scope' },
+                    tags: { type: 'array', items: { type: 'string' }, description: 'Optional semantic tags for better recall' },
+                },
+                required: ['content', 'scope'],
+            },
+            run: async ({ content, scope, tags }) => {
+                const id = await lima.store({ content, scope, source: 'agent', tags });
+                return { id, stored: true };
+            },
+        });
+        this.tools.push({
+            name: 'memory_list',
+            description: 'List facts from long-term memory, optionally filtered by scope',
+            parameters: {
+                properties: {
+                    scope: { type: 'string', enum: ['profile', 'knowledge', 'working', 'task'], description: 'Filter by scope' },
+                    limit: { type: 'number', description: 'Max number of facts (default 20)' },
+                },
+                required: [],
+            },
+            run: async ({ scope, limit }) => {
+                const facts = await lima.listMemory({ scope, limit: limit ?? 20 });
+                return facts.map(f => ({ id: f.id, content: f.content, scope: f.scope, tags: f.tags, created: f.created }));
+            },
+        });
+        this.tools.push({
+            name: 'memory_delete',
+            description: 'Delete a fact from long-term memory by ID',
+            parameters: {
+                properties: {
+                    id: { type: 'string', description: 'The fact ID to delete' },
+                },
+                required: ['id'],
+            },
+            run: async ({ id }) => {
+                const deleted = await lima.deleteMemory(id);
+                return { deleted: deleted > 0, id };
+            },
+        });
     }
     registerTaskTools(configManager) {
         const self = this;

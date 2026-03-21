@@ -4,6 +4,7 @@ import * as os from 'os'
 import * as fs from 'fs/promises'
 import { ConfigManager, AgentSmith } from '@agent-smith/core'
 import { LocalStorage, LocalScheduler, LocalGateway } from '@agent-smith/transport-local'
+import { LimaMemory, SqliteHistory } from '@agent-smith/lima'
 
 async function openBrowser(url: string): Promise<void> {
   const { spawn } = await import('child_process')
@@ -157,6 +158,27 @@ async function main(): Promise<void> {
   const scheduler = new LocalScheduler()
   const gateway = new LocalGateway(config.transport.port, configManager, uiDir, userSkillsDir)
 
+  const lima = new LimaMemory(path.join(agentSmithHome, 'lima.db'))
+  const history = new SqliteHistory(lima.getDb())
+
+  // Migrate existing JSON history to SQLite (one-time)
+  const legacyHistoryPath = path.join(dataDir, 'memory', 'history.json')
+  try {
+    const raw = await fs.readFile(legacyHistoryPath, 'utf-8')
+    const messages = JSON.parse(raw)
+    if (Array.isArray(messages) && messages.length > 0 && (await history.count()) === 0) {
+      for (const m of messages) {
+        if (m.role === 'user' || m.role === 'assistant' || m.role === 'system') {
+          await history.add({ role: m.role, content: m.content ?? '', agentId: m.agentId })
+        }
+      }
+      console.log(`Migrated ${messages.length} messages from JSON to SQLite.`)
+      await fs.rename(legacyHistoryPath, legacyHistoryPath + '.migrated')
+    }
+  } catch {
+    // No legacy file — nothing to migrate
+  }
+
   const smith = new AgentSmith(
     storage,
     gateway,
@@ -166,6 +188,8 @@ async function main(): Promise<void> {
     extensionDirs,
     configManager,
     styleDirs,
+    lima,
+    history,
   )
 
   const hostname = config.transport.localhostOnly !== false ? '127.0.0.1' : '0.0.0.0'
@@ -192,17 +216,17 @@ async function main(): Promise<void> {
   gateway.setStylesProvider(() => smith.getStyles())
   gateway.setSetStyleHandler((name) => smith.setStyle(name))
 
+  gateway.setLima(lima)
+
   gateway.setHistoryProvider(async () => {
-    const msgs = await storage.get('memory:history')
-    if (!Array.isArray(msgs)) return []
+    const msgs = await history.getRecent(50)
     return msgs
-      .filter((m: any) => m.role === 'user' || m.role === 'assistant')
-      .slice(-50) // last 50 messages
-      .map((m: any) => ({
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({
         id: m.id,
         role: m.role,
         content: m.content,
-        timestamp: m.timestamp,
+        timestamp: m.timestamp.toISOString(),
       }))
   })
 
