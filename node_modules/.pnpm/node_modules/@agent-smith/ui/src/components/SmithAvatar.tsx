@@ -39,15 +39,29 @@ function getMannequinPoints(count = 900): Particle[] {
   const pts: Particle[] = []
   const rand = (a: number, b: number) => a + Math.random() * (b - a)
 
-  const headRx = 0.38, headRy = 0.44, headCy = 0.08
+  const headRx = 0.38, headRy = 0.38, headCy = 0.05
 
-  // ── Head fill (ellipse) ──────────────────────────────
+  // Cheekbone shape: full width from crown down to cheekbone level,
+  // then taper toward chin. Cheekbones sit below the glasses (~t = -0.18).
+  const cheekStart = -0.18  // t where jaw taper begins
+  const faceRx = (y: number) => {
+    const t = (y - headCy) / headRy  // -1 (chin) → +1 (crown)
+    if (t < cheekStart) {
+      // normalize 0 (at cheekbones) → 1 (at chin)
+      const u = (t - cheekStart) / (-1 - cheekStart)
+      return headRx * (1.0 - 0.30 * Math.pow(u, 0.85))  // jaw taper
+    }
+    // above cheekbones: very gentle crown taper
+    return headRx * (1.0 - 0.10 * Math.pow(Math.max(0, t), 2.2))
+  }
+
+  // ── Head fill ───────────────────────────────────────
   let added = 0
   while (added < count * 0.45) {
     const angle = rand(0, Math.PI * 2)
-    const r = Math.sqrt(Math.random())
-    const x = r * headRx * Math.cos(angle)
-    const y = headCy + r * headRy * Math.sin(angle)
+    const r     = Math.sqrt(Math.random())
+    const y     = headCy + r * headRy * Math.sin(angle)
+    const x     = r * faceRx(y) * Math.cos(angle)
     pts.push({ x, y, zone: "head" })
     added++
   }
@@ -56,12 +70,10 @@ function getMannequinPoints(count = 900): Particle[] {
   added = 0
   while (added < count * 0.12) {
     const angle = rand(0, Math.PI * 2)
-    const r = 0.90 + rand(0, 0.14)
-    pts.push({
-      x: r * headRx * Math.cos(angle),
-      y: headCy + r * headRy * Math.sin(angle),
-      zone: "outline",
-    })
+    const r     = 0.90 + rand(0, 0.14)
+    const y     = headCy + r * headRy * Math.sin(angle)
+    const x     = r * faceRx(y) * Math.cos(angle)
+    pts.push({ x, y, zone: "outline" })
     added++
   }
 
@@ -119,6 +131,55 @@ function getMannequinPoints(count = 900): Particle[] {
   while (added < count * 0.03) {
     pts.push({ x: rand(-0.06, 0.06), y: rand(0.14, 0.18), zone: "bridge" })
     added++
+  }
+
+  // ── Mouth ─────────────────────────────────────────────
+  // Neutral expression: straight parting line, subtle lips, corners level
+  const mouthY  = -0.105   // vertical center of mouth
+  const mouthW  =  0.075   // half-width — narrower
+  const lipGap  =  0.004   // half of parting gap
+
+  // Lip parting line — thin, nearly straight
+  added = 0
+  while (added < count * 0.014) {
+    const x = rand(-mouthW, mouthW)
+    const curve = 0.004 * (1 - (x / mouthW) ** 2)
+    const y = mouthY + curve + rand(-0.003, 0.003)
+    pts.push({ x, y, zone: "mouth" })
+    added++
+  }
+
+  // Upper lip — very thin
+  added = 0
+  while (added < count * 0.008) {
+    const x = rand(-mouthW, mouthW)
+    const bow = -0.004 * Math.exp(-((x / 0.04) ** 2))
+    const yTop = mouthY + lipGap + 0.010 + bow
+    const y = rand(mouthY + lipGap, yTop)
+    pts.push({ x, y, zone: "mouth" })
+    added++
+  }
+
+  // Lower lip — slightly fuller but still subtle
+  added = 0
+  while (added < count * 0.010) {
+    const x = rand(-mouthW, mouthW)
+    const swell = 0.009 * (1 - (x / mouthW) ** 2)
+    const yBot = mouthY - lipGap - swell
+    const y = rand(yBot, mouthY - lipGap)
+    pts.push({ x, y, zone: "mouth" })
+    added++
+  }
+
+  // Corners
+  for (const sx of [-1, 1]) {
+    added = 0
+    while (added < count * 0.004) {
+      const x = sx * mouthW + rand(-0.008, 0.003 * sx)
+      const y = mouthY + rand(-0.007, 0.007)
+      pts.push({ x, y, zone: "mouth" })
+      added++
+    }
   }
 
   // ── Scanline noise ────────────────────────────────────
@@ -216,6 +277,7 @@ export default function SmithAvatar({ agentState = "idle", size = 380 }: SmithAv
         outline:  1.4,
         glasses:  1.6,
         bridge:   1.3,
+        mouth:    1.05,
         neck:     0.7,
         shoulder: 0.55,
         scan:     0.35,
@@ -240,11 +302,13 @@ export default function SmithAvatar({ agentState = "idle", size = 380 }: SmithAv
 
         const dotR = p.zone === "glasses" || p.zone === "bridge"
           ? 1.6 * DPR
-          : p.zone === "outline"
-            ? 1.3 * DPR
-            : p.zone === "scan"
-              ? 0.7 * DPR
-              : 1.1 * DPR
+          : p.zone === "mouth"
+            ? 1.1 * DPR
+            : p.zone === "outline"
+              ? 1.3 * DPR
+              : p.zone === "scan"
+                ? 0.7 * DPR
+                : 1.1 * DPR
 
         ctx.beginPath()
         ctx.arc(px, py, dotR, 0, Math.PI * 2)
