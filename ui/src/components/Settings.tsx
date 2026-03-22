@@ -397,6 +397,8 @@ function SystemSection({ config, updateConfig }: any) {
     <div className="space-y-4 max-w-md">
       <SectionHeader title="System" />
 
+      <ToggleRow label="Daily briefing" description="Morning briefing on first open of the day (weather, tasks, reminders)."
+        value={system.dailyBriefing ?? true} onChange={(v) => update('dailyBriefing', v)} />
       <ToggleRow label="Prevent sleep" description="Keep computer awake while Smith is running."
         value={system.preventSleep ?? false} onChange={(v) => update('preventSleep', v)} />
       <ToggleRow label="Auto-open browser" description="Automatically open browser when Agent Smith starts."

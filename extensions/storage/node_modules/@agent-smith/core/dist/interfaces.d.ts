@@ -138,12 +138,15 @@ export interface AgentConfig {
         historyWindow: number;
         smartCompress: boolean;
         promptCaching: boolean;
+        limaEnabled: boolean;
     };
     system?: {
         preventSleep: boolean;
         autoOpenBrowser: boolean;
         darkTheme: boolean;
         language: string;
+        dailyBriefing?: boolean;
+        lastOpenedDate?: string;
     };
     tasks?: Record<string, ScheduledTaskDefinition>;
 }

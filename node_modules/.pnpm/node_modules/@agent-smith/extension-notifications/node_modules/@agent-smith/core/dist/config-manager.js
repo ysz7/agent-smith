@@ -68,6 +68,7 @@ const DEFAULT_CONFIG = {
         historyWindow: 20,
         smartCompress: true,
         promptCaching: true,
+        limaEnabled: true,
     },
     system: {
         preventSleep: false,

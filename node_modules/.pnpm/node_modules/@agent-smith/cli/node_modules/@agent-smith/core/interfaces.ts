@@ -169,6 +169,8 @@ export interface AgentConfig {
     autoOpenBrowser: boolean
     darkTheme: boolean
     language: string
+    dailyBriefing?: boolean
+    lastOpenedDate?: string
   }
   tasks?: Record<string, ScheduledTaskDefinition>
 }

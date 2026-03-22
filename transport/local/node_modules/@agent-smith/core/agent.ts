@@ -121,6 +121,32 @@ export class AgentSmith {
     return this.extensionLoader.getDiscoveredNames()
   }
 
+  // Called by CLI on first open of the day to broadcast a morning briefing
+  async runDailyBriefing(): Promise<void> {
+    const date = new Date().toLocaleDateString('en-US', {
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    })
+    const instructions = `Today is ${date}. Give a concise daily briefing covering: current weather if weather skill is available, any scheduled tasks or reminders due today, and anything relevant from long-term memory (upcoming events, notes, habits). Keep it short — 3-5 bullet points max. Start with "Good morning" or similar greeting.`
+
+    try {
+      const messages: Array<{ role: 'user' | 'assistant'; content: any }> = [
+        { role: 'user', content: instructions },
+      ]
+      const response = await this.thinkWithMessages(messages)
+      await this.transport.broadcast({
+        type: 'message',
+        content: response,
+        data: { dailyBriefing: true },
+      })
+    } catch (err: any) {
+      await this.transport.broadcast({
+        type: 'error',
+        content: `Daily briefing error: ${err?.message ?? 'Unknown error'}`,
+        data: { dailyBriefing: true },
+      })
+    }
+  }
+
   // Called by CLI after loading tasks from config to run a scheduled task
   async runScheduledTask(taskId: string, instructions: string): Promise<void> {
     try {
@@ -325,7 +351,7 @@ export class AgentSmith {
           })
 
           // Extract Pattern: store compact working fact after each tool call
-          if (this.lima && limaEnabled && resultStr.length >= 50) {
+          if (this.lima && this.config.performance?.limaEnabled !== false && resultStr.length >= 50) {
             const snippet = resultStr.slice(0, 300)
             this.lima.store({
               content: `[${block.name}] ${snippet}`,

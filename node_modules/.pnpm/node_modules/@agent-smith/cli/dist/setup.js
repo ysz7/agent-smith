@@ -83,10 +83,40 @@ function addToWindowsPath() {
         console.log(`   Add this to your PATH manually: ${BIN_DIR}`);
     }
 }
+function installPlaywrightChromium() {
+    console.log('Installing Playwright Chromium browser...');
+    try {
+        // Search for playwright CLI in common locations relative to this package
+        const searchRoots = [
+            // Same node_modules as this package (global install)
+            path.join(__dirname, '..', 'node_modules', 'playwright', 'cli.js'),
+            // Monorepo: computer-use extension node_modules
+            path.join(__dirname, '..', '..', 'extensions', 'computer-use', 'node_modules', 'playwright', 'cli.js'),
+            // Hoisted to workspace root
+            path.join(__dirname, '..', '..', 'node_modules', 'playwright', 'cli.js'),
+        ];
+        const playwrightBin = searchRoots.find(p => fs.existsSync(p)) ?? null;
+        if (playwrightBin) {
+            (0, child_process_1.execSync)(`node "${playwrightBin}" install chromium`, { stdio: 'inherit', timeout: 300000 });
+        }
+        else {
+            // Fallback: npx (works if playwright is anywhere in PATH or npx cache)
+            (0, child_process_1.execSync)('npx --yes playwright install chromium', { stdio: 'inherit', timeout: 300000 });
+        }
+        console.log('✓ Playwright Chromium installed');
+    }
+    catch {
+        console.log('⚠  Could not install Playwright Chromium automatically.');
+        console.log('   Run manually: cd extensions/computer-use && npx playwright install chromium');
+    }
+}
 function main() {
     ensureBinDir();
     if (process.platform === 'win32') {
         addToWindowsPath();
+        installPlaywrightChromium();
+        console.log('✓ Agent Smith installed successfully!');
+        console.log('  Run: agent-smith start');
         return;
     }
     const home = os.homedir();
@@ -108,6 +138,7 @@ function main() {
         // Create .profile as fallback
         addToShellConfig(path.join(home, '.profile'));
     }
+    installPlaywrightChromium();
     console.log('✓ Agent Smith installed successfully!');
     console.log('  Run: agent-smith start');
     console.log('  (You may need to restart your terminal or run: source ~/.zshrc)');

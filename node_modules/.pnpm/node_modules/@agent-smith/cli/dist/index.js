@@ -241,6 +241,16 @@ async function main() {
         setTimeout(() => openBrowser(url), 1500);
         console.log(`Opening browser at ${url}`);
     }
+    // Daily briefing — trigger on first open of the day
+    const today = new Date().toISOString().slice(0, 10);
+    if (config.system?.dailyBriefing !== false && config.system?.lastOpenedDate !== today) {
+        await configManager.save({ system: { preventSleep: false, autoOpenBrowser: true, darkTheme: true, language: 'en', ...config.system, lastOpenedDate: today } });
+        // Delay to allow the browser/UI to connect via WebSocket before the broadcast
+        setTimeout(() => {
+            smith.runDailyBriefing().catch(console.error);
+        }, 4000);
+        console.log('Daily briefing scheduled');
+    }
     // Graceful shutdown
     const shutdown = async () => {
         console.log('\nShutting down Agent Smith...');

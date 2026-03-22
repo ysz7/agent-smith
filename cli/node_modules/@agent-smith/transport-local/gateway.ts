@@ -581,6 +581,37 @@ export class LocalGateway implements ITransport {
       }
     })
 
+    // GET /api/screenshots/:filename — serve screenshot files
+    const screenshotsDir = path.join(os.homedir(), '.agent-smith', 'screenshots')
+    this.app.get('/api/screenshots/:filename', (req, res) => {
+      const filename = path.basename(req.params.filename) // prevent path traversal
+      const filePath = path.join(screenshotsDir, filename)
+      if (!fs.existsSync(filePath)) { res.status(404).json({ error: 'Not found' }); return }
+      res.sendFile(filePath)
+    })
+
+    // POST /api/reveal — open file location in system file manager
+    this.app.post('/api/reveal', async (req, res) => {
+      const { filePath } = req.body
+      if (typeof filePath !== 'string') { res.status(400).json({ error: 'filePath required' }); return }
+
+      const agentSmithDir = path.join(os.homedir(), '.agent-smith')
+      const normalized = path.normalize(filePath)
+      if (!normalized.startsWith(agentSmithDir)) {
+        res.status(403).json({ error: 'Access denied' }); return
+      }
+
+      const { spawn } = await import('child_process')
+      if (process.platform === 'win32') {
+        spawn('explorer', ['/select,', normalized], { detached: true, stdio: 'ignore' }).unref()
+      } else if (process.platform === 'darwin') {
+        spawn('open', ['-R', normalized], { detached: true, stdio: 'ignore' }).unref()
+      } else {
+        spawn('xdg-open', [path.dirname(normalized)], { detached: true, stdio: 'ignore' }).unref()
+      }
+      res.json({ ok: true })
+    })
+
     // SPA catch-all — serve index.html for unknown routes
     if (this.uiDir && fs.existsSync(this.uiDir)) {
       this.app.get('*', (_req, res) => {

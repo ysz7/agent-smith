@@ -128,6 +128,31 @@ class AgentSmith {
     getDiscoveredExtensionNames() {
         return this.extensionLoader.getDiscoveredNames();
     }
+    // Called by CLI on first open of the day to broadcast a morning briefing
+    async runDailyBriefing() {
+        const date = new Date().toLocaleDateString('en-US', {
+            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+        });
+        const instructions = `Today is ${date}. Give a concise daily briefing covering: current weather if weather skill is available, any scheduled tasks or reminders due today, and anything relevant from long-term memory (upcoming events, notes, habits). Keep it short — 3-5 bullet points max. Start with "Good morning" or similar greeting.`;
+        try {
+            const messages = [
+                { role: 'user', content: instructions },
+            ];
+            const response = await this.thinkWithMessages(messages);
+            await this.transport.broadcast({
+                type: 'message',
+                content: response,
+                data: { dailyBriefing: true },
+            });
+        }
+        catch (err) {
+            await this.transport.broadcast({
+                type: 'error',
+                content: `Daily briefing error: ${err?.message ?? 'Unknown error'}`,
+                data: { dailyBriefing: true },
+            });
+        }
+    }
     // Called by CLI after loading tasks from config to run a scheduled task
     async runScheduledTask(taskId, instructions) {
         try {
@@ -187,8 +212,9 @@ class AgentSmith {
             messages.push({ role: 'user', content: msg.content });
         }
         // LIMA: recall relevant long-term facts and inject as context block
+        const limaEnabled = this.config.performance?.limaEnabled !== false;
         let limaContext = '';
-        if (this.lima) {
+        if (this.lima && limaEnabled) {
             try {
                 const result = await this.lima.recall(msg.content);
                 if (result.contextBlock)
@@ -206,7 +232,7 @@ class AgentSmith {
                 await this.memory.add({ role: 'assistant', content: response });
             }
             // LIMA: run decay after response to age out stale activations
-            if (this.lima && response.trim()) {
+            if (this.lima && limaEnabled && response.trim()) {
                 this.lima.decay().catch(() => { });
             }
         }
@@ -229,9 +255,6 @@ class AgentSmith {
         const provider = (0, interfaces_1.detectProvider)(this.config.agent.model);
         const cachingEnabled = this.config.performance?.promptCaching !== false;
         const useAnthropicCache = provider === 'anthropic' && cachingEnabled;
-        const systemWithContext = limaContext
-            ? `${this.systemPrompt}\n\n[Long-term memory]\n${limaContext}`
-            : this.systemPrompt;
         // Build tool definitions — for Anthropic caching, mark last tool with cache_control
         const toolDefs = this.tools.map((t, i) => ({
             name: t.name,
@@ -241,19 +264,25 @@ class AgentSmith {
                 ? { cache_control: { type: 'ephemeral' } }
                 : {}),
         }));
+        // Inject LIMA context as a user message prefix so the system prompt stays
+        // stable across requests and Anthropic prompt caching is not invalidated.
+        // Only prepend on depth 0 — tool-call continuations already have it in messages.
+        const messagesWithContext = (limaContext && depth === 0)
+            ? [{ role: 'user', content: `[Long-term memory]\n${limaContext}\n\n---` }, ...messages]
+            : messages;
         const stream = useAnthropicCache
             ? this.client.beta.promptCaching.messages.stream({
                 model: this.config.agent.model,
                 max_tokens: 4096,
-                system: [{ type: 'text', text: systemWithContext, cache_control: { type: 'ephemeral' } }],
-                messages,
+                system: [{ type: 'text', text: this.systemPrompt, cache_control: { type: 'ephemeral' } }],
+                messages: messagesWithContext,
                 ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
             })
             : this.client.messages.stream({
                 model: this.config.agent.model,
                 max_tokens: 4096,
-                system: systemWithContext,
-                messages,
+                system: this.systemPrompt,
+                messages: messagesWithContext,
                 ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
             });
         let fullText = '';
@@ -306,7 +335,7 @@ class AgentSmith {
                         content: resultStr,
                     });
                     // Extract Pattern: store compact working fact after each tool call
-                    if (this.lima && resultStr.length >= 50) {
+                    if (this.lima && this.config.performance?.limaEnabled !== false && resultStr.length >= 50) {
                         const snippet = resultStr.slice(0, 300);
                         this.lima.store({
                             content: `[${block.name}] ${snippet}`,

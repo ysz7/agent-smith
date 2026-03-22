@@ -21,6 +21,7 @@ export declare class AgentSmith {
     getSkills(): Skill[];
     getExtensionNames(): string[];
     getDiscoveredExtensionNames(): string[];
+    runDailyBriefing(): Promise<void>;
     runScheduledTask(taskId: string, instructions: string): Promise<void>;
     private handleMessage;
     private thinkStream;

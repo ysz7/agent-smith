@@ -49,7 +49,11 @@
       "Bash(grep -h \"name:\" extensions/*/index.ts)",
       "Bash(grep -v \"//\")",
       "Bash(find node_modules -name package.json -path *anthropic* ! -path *pnpm*)",
-      "Bash(find node_modules/.pnpm -name package.json -path *anthropic-ai*sdk*)"
+      "Bash(find node_modules/.pnpm -name package.json -path *anthropic-ai*sdk*)",
+      "Bash(find /c/YSZ/PROJECTS/DEVELOPMENT/agent-smith -path */skills/* -name *.md)",
+      "Bash(find /c/YSZ/PROJECTS/DEVELOPMENT/agent-smith -path */transport/local* -name *.ts)",
+      "Bash(find /c/YSZ/PROJECTS/DEVELOPMENT/agent-smith/core -name *.ts)",
+      "Bash(npx playwright:*)"
     ]
   }
 }
