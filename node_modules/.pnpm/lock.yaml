@@ -78,6 +78,19 @@ importers:
         specifier: ^5.5.0
         version: 5.9.3
 
+  extensions/calendar:
+    dependencies:
+      '@agent-smith/core':
+        specifier: workspace:*
+        version: link:../../core
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+
   extensions/clipboard:
     dependencies:
       '@agent-smith/core':

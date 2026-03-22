@@ -275,11 +275,21 @@ export class AgentSmith {
         : {}),
     }))
 
-    // Inject LIMA context as a user message prefix so the system prompt stays
+    // Inject date + LIMA context as a user message prefix so the system prompt stays
     // stable across requests and Anthropic prompt caching is not invalidated.
     // Only prepend on depth 0 — tool-call continuations already have it in messages.
-    const messagesWithContext = (limaContext && depth === 0)
-      ? [{ role: 'user' as const, content: `[Long-term memory]\n${limaContext}\n\n---` }, ...messages]
+    let contextBlock = ''
+    if (depth === 0) {
+      const now = new Date()
+      const dateStr = now.toLocaleString('en-US', {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+        hour: '2-digit', minute: '2-digit', hour12: false,
+      })
+      contextBlock = `[Current date and time: ${dateStr}]`
+      if (limaContext) contextBlock += `\n\n[Long-term memory]\n${limaContext}`
+    }
+    const messagesWithContext = (contextBlock && depth === 0)
+      ? [{ role: 'user' as const, content: `${contextBlock}\n\n---` }, ...messages]
       : messages
 
     const stream = useAnthropicCache

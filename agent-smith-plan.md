@@ -1010,18 +1010,18 @@ Debounced chokidar watcher — перезагрузка максимум раз 
 - ✅ Авто-индексация прикреплённых файлов в LIMA
 
 **10.2 — Google Calendar / Apple Calendar**
-- [ ] OAuth авторизация (Google Calendar API / CalDAV)
-- [ ] Двусторонняя синхронизация событий
-- [ ] Агент читает и создаёт события через инструменты
+- [ ] _(отложено)_
 
 **10.3 — Gmail / Outlook**
-- [ ] OAuth авторизация (Gmail API / Microsoft Graph)
-- [ ] Чтение входящих писем
-- [ ] Составление и отправка писем через агента
+- [ ] _(отложено)_
 
 **10.4 — Smart calendar**
-- [ ] Планирование на естественном языке ("запланируй встречу на завтра в 3")
-- [ ] Предупреждения о конфликтах в расписании
+- ✅ Extension `calendar` — хранилище событий (storage prefix `calendar:event:`)
+- ✅ `calendar_add` — создать событие, вернуть cron для reminder + конфликты
+- ✅ `calendar_list` — список событий с фильтром по диапазону дат
+- ✅ `calendar_delete` — удалить событие, вернуть taskId для отвязки reminder
+- ✅ `calendar_update` — перенести или отредактировать событие, вернуть новый cron
+- ✅ Skill `calendar` — natural language → datetime, предупреждения о конфликтах, двухшаговое создание (event + task)
 
 **10.5 — Computer use**
 - ✅ Extension `computer-use` на Playwright (изолированный профиль `~/.agent-smith/computer-use-profile`)
