@@ -655,6 +655,7 @@ export class LocalGateway implements ITransport {
             content: msg.content ?? '',
             agentId: msg.agentId,
             signal: controller.signal,
+            image: msg.image,
           })
         } catch {
           // Invalid JSON — ignore silently

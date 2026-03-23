@@ -728,6 +728,7 @@ class LocalGateway {
                         content: msg.content ?? '',
                         agentId: msg.agentId,
                         signal: controller.signal,
+                        image: msg.image,
                     });
                 }
                 catch {

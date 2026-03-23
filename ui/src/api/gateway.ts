@@ -40,9 +40,9 @@ class GatewayClient {
     }
   }
 
-  send(content: string): void {
+  send(content: string, image?: { data: string; mediaType: string }): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'message', content }))
+      this.ws.send(JSON.stringify({ type: 'message', content, ...(image && { image }) }))
     }
   }
 

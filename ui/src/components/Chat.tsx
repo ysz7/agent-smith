@@ -37,6 +37,7 @@ export default function Chat() {
   const [input, setInput] = useState('')
   const [bgAvatarSize, setBgAvatarSize] = useState(600)
   const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [pendingImageDataUrl, setPendingImageDataUrl] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const bottomRef   = useRef<HTMLDivElement>(null)
@@ -90,22 +91,39 @@ export default function Chat() {
 
     setUploadError(null)
 
-    // Upload attachment first if present
     let agentFileNote = ''
     let attachmentName: string | undefined
+    let attachmentImage: string | undefined
+    let sendImage: { data: string; mediaType: string } | undefined
+
     if (pendingFile) {
       setUploading(true)
       try {
-        const form = new FormData()
-        form.append('file', pendingFile)
-        const res = await fetch(`${API}/api/documents/upload`, { method: 'POST', body: form })
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}))
-          throw new Error(err.error ?? 'Upload failed')
+        if (pendingFile.type.startsWith('image/')) {
+          // Read image as base64 for inline sending to Claude vision API
+          const dataUrl = pendingImageDataUrl ?? await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = (e) => resolve(e.target!.result as string)
+            reader.onerror = reject
+            reader.readAsDataURL(pendingFile!)
+          })
+          const base64 = dataUrl.split(',')[1]
+          sendImage = { data: base64, mediaType: pendingFile.type }
+          attachmentName = pendingFile.name
+          attachmentImage = dataUrl
+        } else {
+          // Upload document to LIMA
+          const form = new FormData()
+          form.append('file', pendingFile)
+          const res = await fetch(`${API}/api/documents/upload`, { method: 'POST', body: form })
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}))
+            throw new Error(err.error ?? 'Upload failed')
+          }
+          const data = await res.json()
+          attachmentName = pendingFile.name
+          agentFileNote = `\n\n[File attached: ${pendingFile.name} — ${data.chunks} chunks indexed in memory, available for recall]`
         }
-        const data = await res.json()
-        attachmentName = pendingFile.name
-        agentFileNote = `\n\n[File attached: ${pendingFile.name} — ${data.chunks} chunks indexed in memory, available for recall]`
       } catch (err: any) {
         setUploadError(err?.message ?? 'Upload failed')
         setUploading(false)
@@ -113,19 +131,19 @@ export default function Chat() {
       }
       setUploading(false)
       setPendingFile(null)
+      setPendingImageDataUrl(null)
     }
 
-    // Show only user text in chat bubble (attachment shown as chip)
     addMessage({
       id: Math.random().toString(36).slice(2),
       role: 'user',
       content: text,
       timestamp: new Date(),
       attachmentName,
+      attachmentImage,
     })
 
-    // Send to agent: text + plain file note (no markdown)
-    gateway.send((text + agentFileNote).trim())
+    gateway.send((text + agentFileNote).trim(), sendImage)
     setInput('')
 
     if (textareaRef.current) {
@@ -136,9 +154,36 @@ export default function Chat() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    setPendingFile(file)
     setUploadError(null)
+    setPendingFile(file)
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader()
+      reader.onload = (ev) => setPendingImageDataUrl(ev.target?.result as string)
+      reader.readAsDataURL(file)
+    } else {
+      setPendingImageDataUrl(null)
+    }
     if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (const item of Array.from(items)) {
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const file = item.getAsFile()
+        if (!file) continue
+        e.preventDefault()
+        const ext = file.type.split('/')[1]?.replace('jpeg', 'jpg') ?? 'png'
+        const named = new File([file], `pasted-image-${Date.now()}.${ext}`, { type: file.type })
+        setUploadError(null)
+        setPendingFile(named)
+        const reader = new FileReader()
+        reader.onload = (ev) => setPendingImageDataUrl(ev.target?.result as string)
+        reader.readAsDataURL(named)
+        return
+      }
+    }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -300,16 +345,32 @@ export default function Chat() {
               {/* Attachment chip */}
               {pendingFile && (
                 <div className="flex items-center gap-1.5 px-4 pt-3">
-                  <div className="flex items-center gap-1.5 rounded-lg border bg-muted px-2.5 py-1 text-xs text-foreground/80">
-                    <Paperclip className="h-3 w-3 shrink-0" />
-                    <span className="max-w-[200px] truncate">{pendingFile.name}</span>
-                    <button
-                      onClick={() => setPendingFile(null)}
-                      className="text-muted-foreground hover:text-foreground ml-0.5"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </div>
+                  {pendingImageDataUrl ? (
+                    <div className="relative inline-block">
+                      <img
+                        src={pendingImageDataUrl}
+                        alt={pendingFile.name}
+                        className="h-20 rounded-lg object-cover"
+                      />
+                      <button
+                        onClick={() => { setPendingFile(null); setPendingImageDataUrl(null) }}
+                        className="absolute right-1 top-1 rounded-full bg-background/80 p-0.5 text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 rounded-lg border bg-muted px-2.5 py-1 text-xs text-foreground/80">
+                      <Paperclip className="h-3 w-3 shrink-0" />
+                      <span className="max-w-[200px] truncate">{pendingFile.name}</span>
+                      <button
+                        onClick={() => setPendingFile(null)}
+                        className="text-muted-foreground hover:text-foreground ml-0.5"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -318,6 +379,7 @@ export default function Chat() {
                 value={input}
                 onChange={handleTextareaChange}
                 onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
                 placeholder="Reply…"
                 rows={1}
                 disabled={isStreaming || uploading}
@@ -339,13 +401,13 @@ export default function Chat() {
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="top" className="text-xs">
-                    Attach file (PDF, DOCX, TXT, MD)
+                    Attach file or image (PDF, DOCX, TXT, MD, JPG, PNG, GIF, WEBP)
                   </TooltipContent>
                 </Tooltip>
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".pdf,.docx,.txt,.md"
+                  accept=".pdf,.docx,.txt,.md,.jpg,.jpeg,.png,.gif,.webp,image/*"
                   className="hidden"
                   onChange={handleFileChange}
                 />

@@ -10,6 +10,10 @@ export interface IncomingMessage {
     content: string;
     agentId?: string;
     signal?: AbortSignal;
+    image?: {
+        data: string;
+        mediaType: string;
+    };
 }
 export interface OutgoingMessage {
     type: string;

@@ -191,7 +191,7 @@ export class AgentSmith {
 
     await this.memory.add({
       role: 'user',
-      content: msg.content,
+      content: msg.image ? (msg.content || '[Image attached]') : msg.content,
       agentId: msg.agentId,
     })
 
@@ -205,12 +205,27 @@ export class AgentSmith {
     const windowSize = this.config.performance?.historyWindow ?? 20
     const history = await this.memory.getRecent(windowSize)
 
-    const messages = history
+    const messages: Array<{ role: 'user' | 'assistant'; content: any }> = history
       .filter(m => m.role !== 'system')
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
 
     if (messages.length === 0) {
       messages.push({ role: 'user', content: msg.content })
+    }
+
+    // Inject image into the last user message as a multimodal content block
+    if (msg.image && messages.length > 0) {
+      const last = messages[messages.length - 1]
+      if (last.role === 'user') {
+        const textContent = typeof last.content === 'string' ? last.content : ''
+        const blocks: any[] = [
+          { type: 'image', source: { type: 'base64', media_type: msg.image.mediaType, data: msg.image.data } },
+        ]
+        if (textContent && textContent !== '[Image attached]') {
+          blocks.push({ type: 'text', text: textContent })
+        }
+        last.content = blocks
+      }
     }
 
     // LIMA: recall relevant long-term facts and inject as context block

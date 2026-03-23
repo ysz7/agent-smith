@@ -141,12 +141,20 @@ export default function Message({ message }: MessageProps) {
     return (
       <div className="flex justify-end">
         <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-secondary px-4 py-2.5 text-sm text-secondary-foreground">
-          {message.attachmentName && (
+          {message.attachmentImage ? (
+            <div className="mb-2">
+              <img
+                src={message.attachmentImage}
+                alt={message.attachmentName ?? 'Image'}
+                className="max-h-60 rounded-lg object-contain"
+              />
+            </div>
+          ) : message.attachmentName ? (
             <div className="mb-2 flex items-center gap-1.5 rounded-lg bg-black/10 dark:bg-white/10 px-2.5 py-1.5 text-xs">
               <Paperclip className="h-3 w-3 shrink-0 opacity-70" />
               <span className="truncate opacity-80">{message.attachmentName}</span>
             </div>
-          )}
+          ) : null}
           {message.content && (
             <p className="whitespace-pre-wrap leading-relaxed text-base">{message.content}</p>
           )}

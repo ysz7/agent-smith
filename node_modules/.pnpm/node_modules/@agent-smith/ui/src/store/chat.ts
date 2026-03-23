@@ -7,6 +7,7 @@ export interface ChatMessage {
   timestamp: Date
   isError?: boolean
   attachmentName?: string
+  attachmentImage?: string // base64 data URL for inline image preview
 }
 
 interface ChatState {
