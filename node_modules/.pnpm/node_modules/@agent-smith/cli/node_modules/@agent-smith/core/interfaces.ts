@@ -106,6 +106,29 @@ export interface AgentDefinition {
   skills?: Record<string, { enabled: boolean; config?: Record<string, any> }>
 }
 
+export interface UserAgentDefinition {
+  id: string
+  name: string
+  model: string
+  systemPrompt?: string
+  createdAt: string
+}
+
+export type AgentStatus = 'idle' | 'thinking' | 'working' | 'stopped' | 'error'
+export type AgentType = 'main' | 'user' | 'orchestrator'
+
+export interface AgentRegistryEntry {
+  id: string
+  name: string
+  type: AgentType
+  status: AgentStatus
+  model: string
+  createdAt: string
+  systemPrompt?: string
+  taskDescription?: string
+  abort?: () => void  // not serialized — only for orchestrator agents
+}
+
 export type AIProvider = 'anthropic' | 'openai' | 'google' | 'ollama'
 
 /** Detect provider from model name */
@@ -136,18 +159,18 @@ export interface AgentConfig {
     config?: Record<string, any>
   }>
   multiAgent: {
-    enabled: boolean
-    agents?: Record<string, AgentDefinition>
-    dynamic?: {
-      enabled: boolean
-      maxAgents: number
-      autoDestroy: boolean
-    }
-    userCreated?: {
-      enabled: boolean
-      maxAgents: number
+    userCreated: {
+      enabled: boolean      // allow user to create agents
+      maxAgents: number     // default: 10
       persistAgents: boolean
     }
+    orchestration: {
+      enabled: boolean      // allow main agent to spawn sub-agents (default: false)
+      maxConcurrent: number // default: 3
+      defaultModel: string  // default: claude-haiku-4-5-20251001
+      autoDestroy: boolean  // destroy orchestrator agents when task done (default: true)
+    }
+    agents?: Record<string, UserAgentDefinition>
   }
   transport: {
     port: number
@@ -194,4 +217,7 @@ export interface IConfigManager {
   updateTask(id: string, updates: Partial<ScheduledTaskDefinition>): Promise<void>
   deleteTask(id: string): Promise<void>
   recordTaskRun(id: string, status: 'success' | 'error', result: string): Promise<void>
+  createUserAgent(def: UserAgentDefinition): Promise<void>
+  updateUserAgent(id: string, patch: Partial<Pick<UserAgentDefinition, 'name' | 'model' | 'systemPrompt'>>): Promise<void>
+  deleteUserAgent(id: string): Promise<void>
 }

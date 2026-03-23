@@ -2,7 +2,7 @@ import * as fs from 'fs/promises'
 import * as path from 'path'
 import * as os from 'os'
 import { randomUUID } from 'crypto'
-import type { AgentConfig, IConfigManager, ScheduledTaskDefinition } from './interfaces'
+import type { AgentConfig, IConfigManager, ScheduledTaskDefinition, UserAgentDefinition } from './interfaces'
 
 const CONFIG_VERSION = 1
 
@@ -17,9 +17,17 @@ const DEFAULT_CONFIG: AgentConfig = {
   skills: {},
   extensions: {},
   multiAgent: {
-    enabled: false,
-    dynamic: { enabled: false, maxAgents: 10, autoDestroy: true },
-    userCreated: { enabled: false, maxAgents: 10, persistAgents: true },
+    userCreated: {
+      enabled: true,
+      maxAgents: 10,
+      persistAgents: true,
+    },
+    orchestration: {
+      enabled: false,
+      maxConcurrent: 3,
+      defaultModel: 'claude-haiku-4-5-20251001',
+      autoDestroy: true,
+    },
   },
   transport: {
     port: 3000,
@@ -139,6 +147,28 @@ export class ConfigManager implements IConfigManager {
     config.tasks[id].lastRun = new Date().toISOString()
     config.tasks[id].lastStatus = status
     config.tasks[id].lastResult = result
+    await this.writeConfig(config)
+  }
+
+  async createUserAgent(def: UserAgentDefinition): Promise<void> {
+    const config = await this.load()
+    const agents = config.multiAgent.agents ?? {}
+    config.multiAgent.agents = { ...agents, [def.id]: def }
+    await this.writeConfig(config)
+  }
+
+  async updateUserAgent(id: string, patch: Partial<Pick<UserAgentDefinition, 'name' | 'model' | 'systemPrompt'>>): Promise<void> {
+    const config = await this.load()
+    if (!config.multiAgent.agents?.[id]) return
+    config.multiAgent.agents[id] = { ...config.multiAgent.agents[id], ...patch }
+    await this.writeConfig(config)
+  }
+
+  async deleteUserAgent(id: string): Promise<void> {
+    const config = await this.load()
+    const agents = { ...config.multiAgent.agents }
+    delete agents[id]
+    config.multiAgent.agents = agents
     await this.writeConfig(config)
   }
 

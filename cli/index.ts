@@ -2,7 +2,7 @@
 import * as path from 'path'
 import * as os from 'os'
 import * as fs from 'fs/promises'
-import { ConfigManager, AgentSmith } from '@agent-smith/core'
+import { ConfigManager, AgentSmith, AgentRegistry } from '@agent-smith/core'
 import { LocalStorage, LocalScheduler, LocalGateway } from '@agent-smith/transport-local'
 import { LimaMemory, SqliteHistory } from '@agent-smith/lima'
 
@@ -216,6 +216,34 @@ async function main(): Promise<void> {
   gateway.setStylesProvider(() => smith.getStyles())
   gateway.setSetStyleHandler((name) => smith.setStyle(name))
 
+  // Initialize agent registry
+  const registry = new AgentRegistry()
+
+  // Register main agent (Smith)
+  registry.register({
+    id: 'main',
+    name: config.agent.name,
+    type: 'main',
+    status: 'idle',
+    model: config.agent.model,
+    createdAt: new Date().toISOString(),
+  })
+
+  // Restore user agents from config
+  const userAgents = config.multiAgent.agents ?? {}
+  for (const def of Object.values(userAgents)) {
+    registry.register({
+      id: def.id,
+      name: def.name,
+      type: 'user',
+      status: 'idle',
+      model: def.model,
+      createdAt: def.createdAt,
+      systemPrompt: def.systemPrompt,
+    })
+  }
+
+  gateway.setAgentRegistry(registry)
   gateway.setLima(lima)
 
   const documentsDir = path.join(agentSmithHome, 'documents')

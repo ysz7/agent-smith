@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 
-type Section = 'general' | 'security' | 'performance' | 'skills' | 'extensions' | 'system' | 'memory' | 'documents'
+type Section = 'general' | 'security' | 'performance' | 'skills' | 'extensions' | 'system' | 'memory' | 'documents' | 'agents'
 
 const SECTIONS: { id: Section; label: string }[] = [
   { id: 'general', label: 'General' },
@@ -19,6 +19,7 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'skills', label: 'Skills' },
   { id: 'extensions', label: 'Extensions' },
   { id: 'system', label: 'System' },
+  { id: 'agents', label: 'Agents' },
   { id: 'memory', label: 'Memory / Chat' },
   { id: 'documents', label: 'Documents' },
 ]
@@ -60,6 +61,7 @@ export default function Settings() {
         {section === 'skills' && <SkillsSection />}
         {section === 'extensions' && <ExtensionsSection />}
         {section === 'system' && <SystemSection config={config} updateConfig={updateConfig} />}
+        {section === 'agents' && <AgentsSection config={config} updateConfig={updateConfig} />}
         {section === 'memory' && <MemorySection />}
         {section === 'documents' && <DocumentsSection />}
       </div>
@@ -628,6 +630,99 @@ function DocumentsSection() {
             </div>
           ))}
         </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Agents ───────────────────────────────────────────────────────────────────
+
+const AGENT_MODELS = [
+  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5 (fast, cheap)' },
+  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+  { id: 'claude-opus-4-6', label: 'Opus 4.6' },
+]
+
+function AgentsSection({ config, updateConfig }: any) {
+  const uc = config.multiAgent?.userCreated ?? { enabled: true, maxAgents: 10, persistAgents: true }
+  const orch = config.multiAgent?.orchestration ?? { enabled: false, maxConcurrent: 3, defaultModel: 'claude-haiku-4-5-20251001', autoDestroy: true }
+
+  const updateUC = async (patch: any) => {
+    await updateConfig({ multiAgent: { ...config.multiAgent, userCreated: { ...uc, ...patch } } })
+  }
+  const updateOrch = async (patch: any) => {
+    await updateConfig({ multiAgent: { ...config.multiAgent, orchestration: { ...orch, ...patch } } })
+  }
+
+  return (
+    <div className="space-y-4 max-w-md">
+      <SectionHeader title="Agents" />
+
+      <p className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">User Agents</p>
+
+      <ToggleRow
+        label="Allow creating user agents"
+        description="Let users create persistent custom agents in Agents Office."
+        value={uc.enabled ?? true}
+        onChange={(v) => updateUC({ enabled: v })}
+      />
+
+      <Field label="Max user agents">
+        <select
+          value={uc.maxAgents ?? 10}
+          onChange={(e) => updateUC({ maxAgents: Number(e.target.value) })}
+          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+        >
+          {[3, 5, 10, 20].map((n) => (
+            <option key={n} value={n}>{n} agents</option>
+          ))}
+        </select>
+      </Field>
+
+      <Separator />
+      <p className="text-xs text-muted-foreground uppercase tracking-wide font-semibold">Orchestration</p>
+
+      <ToggleRow
+        label="Allow orchestration"
+        description="Let the main agent spawn sub-agents automatically to handle complex tasks. Off by default."
+        value={orch.enabled ?? false}
+        onChange={(v) => updateOrch({ enabled: v })}
+      />
+
+      {orch.enabled && (
+        <>
+          <Field label="Max concurrent orchestrator agents">
+            <select
+              value={orch.maxConcurrent ?? 3}
+              onChange={(e) => updateOrch({ maxConcurrent: Number(e.target.value) })}
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              {[1, 2, 3, 5, 10].map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-muted-foreground">Hard limit — prevents runaway token spend.</p>
+          </Field>
+
+          <Field label="Default sub-agent model">
+            <select
+              value={orch.defaultModel ?? 'claude-haiku-4-5-20251001'}
+              onChange={(e) => updateOrch({ defaultModel: e.target.value })}
+              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              {AGENT_MODELS.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+          </Field>
+
+          <ToggleRow
+            label="Auto-destroy after task"
+            description="Remove orchestrator agents from the registry once their task completes."
+            value={orch.autoDestroy ?? true}
+            onChange={(v) => updateOrch({ autoDestroy: v })}
+          />
+        </>
       )}
     </div>
   )

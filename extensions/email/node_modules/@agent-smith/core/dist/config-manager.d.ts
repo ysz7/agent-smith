@@ -1,4 +1,4 @@
-import type { AgentConfig, IConfigManager, ScheduledTaskDefinition } from './interfaces';
+import type { AgentConfig, IConfigManager, ScheduledTaskDefinition, UserAgentDefinition } from './interfaces';
 export declare class ConfigManager implements IConfigManager {
     private configDir;
     private configPath;
@@ -15,6 +15,9 @@ export declare class ConfigManager implements IConfigManager {
     updateTask(id: string, updates: Partial<ScheduledTaskDefinition>): Promise<void>;
     deleteTask(id: string): Promise<void>;
     recordTaskRun(id: string, status: 'success' | 'error', result: string): Promise<void>;
+    createUserAgent(def: UserAgentDefinition): Promise<void>;
+    updateUserAgent(id: string, patch: Partial<Pick<UserAgentDefinition, 'name' | 'model' | 'systemPrompt'>>): Promise<void>;
+    deleteUserAgent(id: string): Promise<void>;
     private writeConfig;
     private loadRaw;
     private merge;

@@ -1,5 +1,6 @@
 import { useChatStore } from '../store/chat'
 import { useConfigStore } from '../store/config'
+import { useAgentsStore } from '../store/agents'
 
 class GatewayClient {
   private ws: WebSocket | null = null
@@ -96,6 +97,10 @@ class GatewayClient {
           isError: false,
           isProactive: msg.data?.proactive === true,
         })
+        break
+
+      case 'agent_status':
+        useAgentsStore.getState().setAgents(msg.agents ?? [])
         break
 
       case 'error':

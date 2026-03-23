@@ -1060,27 +1060,28 @@ Debounced chokidar watcher — перезагрузка максимум раз 
 ---
 
 **11.1 — Core**
-- [ ] `AgentRegistry` (`core/agent-registry.ts`) — реестр всех живых агентов (user + orchestrator), их статус и тип
-- [ ] `AgentTeam` (`core/agent-team.ts`) — управление жизненным циклом агентов обоих типов
+- ✅ `AgentRegistry` (`core/agent-registry.ts`) — реестр всех живых агентов (user + orchestrator), их статус и тип
 - [ ] `Orchestrator` (`core/orchestrator.ts`) — создание временных sub-agents под задачу, сбор результатов
-- [ ] Конфиг: `multiAgent.orchestration.enabled` — разрешение главному агенту создавать агентов (по умолчанию `false`)
-- [ ] Конфиг: `multiAgent.orchestration.maxConcurrent` — лимит одновременных orchestrator-agents
-- [ ] WebSocket events: `agent_spawned`, `agent_done`, `agent_stopped`, `agent_status` — для синхронизации UI в реальном времени
+- ✅ Конфиг: `multiAgent.orchestration.enabled` — разрешение главному агенту создавать агентов (по умолчанию `false`)
+- ✅ Конфиг: `multiAgent.orchestration.maxConcurrent` — лимит одновременных orchestrator-agents (по умолчанию 3)
+- ✅ Конфиг: `multiAgent.orchestration.defaultModel` — модель для sub-agents (по умолчанию Haiku 4.5)
+- ✅ WebSocket event `agent_status` — полный список агентов при любом изменении реестра
 
 **11.2 — Создание агентов**
-- [ ] Пользователь создаёт user agents через AgentsOffice UI (имя, модель, скиллы, системный промпт)
+- ✅ Пользователь создаёт user agents через AgentsOffice UI (имя, модель, системный промпт)
 - [ ] Пользователь создаёт user agents через чат: "создай агента-аналитика"
 - [ ] Оркестратор динамически порождает orchestrator agents под задачу (только при `orchestration.enabled`)
-- [ ] Orchestrator agents видны в UI с меткой "auto" и кнопкой Stop — пользователь может прервать в любой момент
-- [ ] User agents персистируются в конфиге и восстанавливаются при перезапуске
+- ✅ Orchestrator agents видны в UI с меткой "auto" и кнопкой Stop — пользователь может прервать в любой момент
+- ✅ User agents персистируются в конфиге и восстанавливаются при перезапуске
 - [ ] Клик на user agent в AgentsOffice → открывает отдельный чат с ним
 
 **11.3 — AgentsOffice (визуальный офис)**
-- [ ] Отдельная вкладка "Agents Office" в Sidebar
-- [ ] 2D canvas-визуализация офиса — каждый агент занимает рабочее место (карточка/аватар)
-- [ ] Визуальный статус: idle / thinking / working / stopped
-- [ ] Анимация коммуникации между агентами когда они передают данные (линии/стрелки)
-- [ ] Orchestrator agents помечены иначе (пунктирная рамка, метка "auto", кнопка ■ Stop)
-- [ ] User agents: кнопки Edit (переименовать/поменять модель) и Delete
-- [ ] Кнопка "+ New Agent" — диалог создания user agent
-- [ ] Главный агент (Smith) всегда в центре / на особом месте, не удаляется
+- ✅ Отдельная вкладка "Agents Office" в Sidebar
+- ✅ Карточки агентов — статус, модель, тип, кнопки действий
+- ✅ Визуальный статус: idle / thinking / working / stopped (цветные индикаторы)
+- ✅ Orchestrator agents помечены иначе (пунктирная рамка, метка "auto", кнопка ■ Stop)
+- ✅ User agents: кнопка Delete; главный агент (Smith) с короной, не удаляется
+- ✅ Кнопка "+ New Agent" — диалог создания user agent (имя, модель, prompt)
+- ✅ Settings → Agents — лимиты user agents + orchestration настройки
+- [ ] Анимация коммуникации между агентами (линии/стрелки) — Phase 11C
+- [ ] Клик на user agent → отдельный чат — Phase 11C

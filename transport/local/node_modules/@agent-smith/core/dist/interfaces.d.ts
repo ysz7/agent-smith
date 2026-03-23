@@ -93,6 +93,26 @@ export interface AgentDefinition {
         config?: Record<string, any>;
     }>;
 }
+export interface UserAgentDefinition {
+    id: string;
+    name: string;
+    model: string;
+    systemPrompt?: string;
+    createdAt: string;
+}
+export type AgentStatus = 'idle' | 'thinking' | 'working' | 'stopped' | 'error';
+export type AgentType = 'main' | 'user' | 'orchestrator';
+export interface AgentRegistryEntry {
+    id: string;
+    name: string;
+    type: AgentType;
+    status: AgentStatus;
+    model: string;
+    createdAt: string;
+    systemPrompt?: string;
+    taskDescription?: string;
+    abort?: () => void;
+}
 export type AIProvider = 'anthropic' | 'openai' | 'google' | 'ollama';
 /** Detect provider from model name */
 export declare function detectProvider(model: string): AIProvider;
@@ -115,18 +135,18 @@ export interface AgentConfig {
         config?: Record<string, any>;
     }>;
     multiAgent: {
-        enabled: boolean;
-        agents?: Record<string, AgentDefinition>;
-        dynamic?: {
-            enabled: boolean;
-            maxAgents: number;
-            autoDestroy: boolean;
-        };
-        userCreated?: {
+        userCreated: {
             enabled: boolean;
             maxAgents: number;
             persistAgents: boolean;
         };
+        orchestration: {
+            enabled: boolean;
+            maxConcurrent: number;
+            defaultModel: string;
+            autoDestroy: boolean;
+        };
+        agents?: Record<string, UserAgentDefinition>;
     };
     transport: {
         port: number;
@@ -171,5 +191,8 @@ export interface IConfigManager {
     updateTask(id: string, updates: Partial<ScheduledTaskDefinition>): Promise<void>;
     deleteTask(id: string): Promise<void>;
     recordTaskRun(id: string, status: 'success' | 'error', result: string): Promise<void>;
+    createUserAgent(def: UserAgentDefinition): Promise<void>;
+    updateUserAgent(id: string, patch: Partial<Pick<UserAgentDefinition, 'name' | 'model' | 'systemPrompt'>>): Promise<void>;
+    deleteUserAgent(id: string): Promise<void>;
 }
 //# sourceMappingURL=interfaces.d.ts.map

@@ -1,4 +1,4 @@
-import { MessageSquare, Clock, Settings, Glasses } from 'lucide-react'
+import { MessageSquare, Clock, Settings, Glasses, Users } from 'lucide-react'
 import type { View } from '@/components/Main'
 import { useChatStore } from '@/store/chat'
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
@@ -13,6 +13,7 @@ interface SidebarProps {
 
 const TOP_NAV: { id: View; icon: React.ElementType; label: string }[] = [
   { id: 'chat', icon: MessageSquare, label: 'Chat' },
+  { id: 'agents', icon: Users, label: 'Agents Office' },
   { id: 'tasks', icon: Clock, label: 'Scheduled' },
 ]
 

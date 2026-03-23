@@ -7,7 +7,8 @@ import * as fs from 'fs'
 import * as fsp from 'fs/promises'
 import { randomUUID } from 'crypto'
 import multer from 'multer'
-import type { ITransport, IConfigManager, IncomingMessage, OutgoingMessage } from '@agent-smith/core'
+import type { ITransport, IConfigManager, IncomingMessage, OutgoingMessage, UserAgentDefinition } from '@agent-smith/core'
+import { AgentRegistry } from '@agent-smith/core'
 import type { ILimaMemory } from '@agent-smith/lima'
 
 export class LocalGateway implements ITransport {
@@ -25,6 +26,7 @@ export class LocalGateway implements ITransport {
   private setStyleHandler?: (name: string) => Promise<void>
   private lima?: ILimaMemory
   private documentsDir?: string
+  private agentRegistry?: AgentRegistry
 
   constructor(
     private port: number,
@@ -84,6 +86,19 @@ export class LocalGateway implements ITransport {
 
   setDocumentsDir(dir: string): void {
     this.documentsDir = dir
+  }
+
+  setAgentRegistry(registry: AgentRegistry): void {
+    this.agentRegistry = registry
+    registry.on('change', (snapshot) => this.broadcastAgentStatus(snapshot))
+  }
+
+  private broadcastAgentStatus(snapshot?: Omit<import('@agent-smith/core').AgentRegistryEntry, 'abort'>[]): void {
+    const agents = snapshot ?? this.agentRegistry?.snapshot() ?? []
+    const payload = JSON.stringify({ type: 'agent_status', agents })
+    this.wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) client.send(payload)
+    })
   }
 
   start(hostname = '127.0.0.1'): void {
@@ -581,6 +596,94 @@ export class LocalGateway implements ITransport {
       }
     })
 
+    // ─── Agent registry REST endpoints ────────────────────────────────────────
+
+    // GET /api/agents — list all live agents
+    this.app.get('/api/agents', (_req, res) => {
+      res.json(this.agentRegistry?.snapshot() ?? [])
+    })
+
+    // POST /api/agents — create a user agent
+    this.app.post('/api/agents', async (req, res) => {
+      if (!this.configManager) { res.status(503).json({ error: 'no config manager' }); return }
+      const { name, model, systemPrompt } = req.body
+      if (!name?.trim()) { res.status(400).json({ error: 'name required' }); return }
+
+      const config = await this.configManager.load()
+      const maxAgents = config.multiAgent.userCreated.maxAgents ?? 10
+      const existing = Object.values(config.multiAgent.agents ?? {}).filter(a => !('type' in a))
+      if (existing.length >= maxAgents) {
+        res.status(400).json({ error: `Max user agents limit (${maxAgents}) reached` }); return
+      }
+
+      const def: UserAgentDefinition = {
+        id: randomUUID(),
+        name: name.trim(),
+        model: model ?? config.multiAgent.orchestration?.defaultModel ?? 'claude-haiku-4-5-20251001',
+        systemPrompt: systemPrompt?.trim() || undefined,
+        createdAt: new Date().toISOString(),
+      }
+
+      await this.configManager.createUserAgent(def)
+      this.agentRegistry?.register({
+        id: def.id,
+        name: def.name,
+        type: 'user',
+        status: 'idle',
+        model: def.model,
+        createdAt: def.createdAt,
+        systemPrompt: def.systemPrompt,
+      })
+
+      res.json(def)
+    })
+
+    // PUT /api/agents/:id — update a user agent's name, model, systemPrompt
+    this.app.put('/api/agents/:id', async (req, res) => {
+      const { id } = req.params
+      const entry = this.agentRegistry?.get(id)
+      if (!entry) { res.status(404).json({ error: 'not found' }); return }
+      if (entry.type !== 'user') { res.status(403).json({ error: 'only user agents can be edited' }); return }
+
+      const { name, model, systemPrompt } = req.body
+      const patch: any = {}
+      if (name?.trim()) patch.name = name.trim()
+      if (model) patch.model = model
+      if (systemPrompt !== undefined) patch.systemPrompt = systemPrompt.trim() || undefined
+
+      await this.configManager?.updateUserAgent(id, patch)
+
+      // Update live registry entry
+      if (patch.name) entry.name = patch.name
+      if (patch.model) entry.model = patch.model
+      if ('systemPrompt' in patch) entry.systemPrompt = patch.systemPrompt
+      this.agentRegistry?.['emit']('change', this.agentRegistry.snapshot())
+
+      res.json({ ok: true })
+    })
+
+    // DELETE /api/agents/:id — delete a user agent (not main, not orchestrator)
+    this.app.delete('/api/agents/:id', async (req, res) => {
+      const { id } = req.params
+      const entry = this.agentRegistry?.get(id)
+      if (!entry) { res.status(404).json({ error: 'not found' }); return }
+      if (entry.type !== 'user') { res.status(403).json({ error: 'only user agents can be deleted' }); return }
+
+      await this.configManager?.deleteUserAgent(id)
+      this.agentRegistry?.unregister(id)
+      res.json({ ok: true })
+    })
+
+    // POST /api/agents/:id/stop — stop an orchestrator agent
+    this.app.post('/api/agents/:id/stop', (req, res) => {
+      const { id } = req.params
+      const entry = this.agentRegistry?.get(id)
+      if (!entry) { res.status(404).json({ error: 'not found' }); return }
+      if (entry.type === 'main') { res.status(403).json({ error: 'cannot stop main agent' }); return }
+      const stopped = this.agentRegistry?.stop(id)
+      res.json({ ok: stopped })
+    })
+
     // GET /api/screenshots/:filename — serve screenshot files
     const screenshotsDir = path.join(os.homedir(), '.agent-smith', 'screenshots')
     this.app.get('/api/screenshots/:filename', (req, res) => {
@@ -636,6 +739,11 @@ export class LocalGateway implements ITransport {
       this.connections.set(connectionId, ws)
 
       ws.send(JSON.stringify({ type: 'connected', data: { connectionId } }))
+
+      // Send current agent list to newly connected client
+      if (this.agentRegistry) {
+        ws.send(JSON.stringify({ type: 'agent_status', agents: this.agentRegistry.snapshot() }))
+      }
 
       ws.on('message', (data) => {
         try {
