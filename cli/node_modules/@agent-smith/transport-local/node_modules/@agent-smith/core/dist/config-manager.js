@@ -76,6 +76,10 @@ const DEFAULT_CONFIG = {
         darkTheme: true,
         language: 'en',
     },
+    heartbeat: {
+        enabled: false,
+        intervalMinutes: 15,
+    },
 };
 class ConfigManager {
     configDir;

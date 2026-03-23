@@ -153,6 +153,10 @@ export interface AgentConfig {
         lastOpenedDate?: string;
     };
     tasks?: Record<string, ScheduledTaskDefinition>;
+    heartbeat?: {
+        enabled: boolean;
+        intervalMinutes: number;
+    };
 }
 export interface IConfigManager {
     load(): Promise<AgentConfig>;

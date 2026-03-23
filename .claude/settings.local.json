@@ -54,7 +54,8 @@
       "Bash(find /c/YSZ/PROJECTS/DEVELOPMENT/agent-smith -path */transport/local* -name *.ts)",
       "Bash(find /c/YSZ/PROJECTS/DEVELOPMENT/agent-smith/core -name *.ts)",
       "Bash(npx playwright:*)",
-      "Bash(grep -E \"\\\\.tsx$\")"
+      "Bash(grep -E \"\\\\.tsx$\")",
+      "Bash(grep -v \"^[0-9]*:.*//\\\\|^[0-9]*:.*\\\\`\")"
     ]
   }
 }

@@ -255,6 +255,9 @@ async function main(): Promise<void> {
     console.log(`Opening browser at ${url}`)
   }
 
+  // Heartbeat — proactive background agent checks
+  smith.startHeartbeat()
+
   // Daily briefing — trigger on first open of the day
   const today = new Date().toISOString().slice(0, 10)
   if (config.system?.dailyBriefing !== false && config.system?.lastOpenedDate !== today) {

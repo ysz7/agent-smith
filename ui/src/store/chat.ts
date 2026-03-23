@@ -6,6 +6,7 @@ export interface ChatMessage {
   content: string
   timestamp: Date
   isError?: boolean
+  isProactive?: boolean
   attachmentName?: string
   attachmentImage?: string // base64 data URL for inline image preview
 }

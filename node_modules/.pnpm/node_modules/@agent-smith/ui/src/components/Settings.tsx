@@ -389,8 +389,14 @@ function ExtensionsSection() {
 
 function SystemSection({ config, updateConfig }: any) {
   const system = config.system ?? {}
+  const heartbeat = config.heartbeat ?? { enabled: false, intervalMinutes: 15 }
+
   const update = async (key: string, value: any) => {
     await updateConfig({ system: { ...system, [key]: value } })
+  }
+
+  const updateHeartbeat = async (patch: Partial<{ enabled: boolean; intervalMinutes: number }>) => {
+    await updateConfig({ heartbeat: { ...heartbeat, ...patch } })
   }
 
   return (
@@ -416,6 +422,34 @@ function SystemSection({ config, updateConfig }: any) {
           <option value="ru">Русский</option>
         </select>
       </Field>
+
+      <Separator />
+      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Heartbeat</p>
+
+      <ToggleRow
+        label="Proactive mode"
+        description="Agent checks for important events in the background and notifies you automatically."
+        value={heartbeat.enabled}
+        onChange={(v) => updateHeartbeat({ enabled: v })}
+      />
+
+      {heartbeat.enabled && (
+        <Field label="Check interval">
+          <select
+            value={heartbeat.intervalMinutes}
+            onChange={(e) => updateHeartbeat({ intervalMinutes: Number(e.target.value) })}
+            className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            <option value={5}>Every 5 minutes</option>
+            <option value={15}>Every 15 minutes</option>
+            <option value={30}>Every 30 minutes</option>
+            <option value={60}>Every hour</option>
+          </select>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Agent will silently check for upcoming events, tasks, and reminders.
+          </p>
+        </Field>
+      )}
     </div>
   )
 }

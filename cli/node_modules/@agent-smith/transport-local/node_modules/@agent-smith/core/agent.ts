@@ -43,6 +43,8 @@ export class AgentSmith {
   private client: Anthropic
   private auditLogPath: string
   private lima: ILimaMemory | null = null
+  private heartbeatTimer?: ReturnType<typeof setInterval>
+  private lastHeartbeatAt = 0
 
   constructor(
     private storage: IStorage,
@@ -106,7 +108,62 @@ export class AgentSmith {
   }
 
   async stop(): Promise<void> {
+    this.stopHeartbeat()
     await this.skillLoader.stop()
+  }
+
+  startHeartbeat(): void {
+    if (this.heartbeatTimer) return
+    // Poll every 60 seconds; actual check interval is read from config each tick
+    this.heartbeatTimer = setInterval(() => {
+      this.checkHeartbeat().catch(() => {})
+    }, 60_000)
+  }
+
+  stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer)
+      this.heartbeatTimer = undefined
+    }
+  }
+
+  private async checkHeartbeat(): Promise<void> {
+    const config = this.configManager ? await this.configManager.load() : this.config
+    if (!config.heartbeat?.enabled) return
+
+    const intervalMs = (config.heartbeat.intervalMinutes ?? 15) * 60 * 1000
+    if (Date.now() - this.lastHeartbeatAt < intervalMs) return
+
+    this.lastHeartbeatAt = Date.now()
+    await this.runHeartbeat()
+  }
+
+  async runHeartbeat(): Promise<void> {
+    const now = new Date()
+    const timeStr = now.toLocaleString('en-US', {
+      weekday: 'short', month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    })
+    const instructions = `[HEARTBEAT] Proactive background check. Current time: ${timeStr}. Use your available tools to check if there is anything the user should know about right now — upcoming calendar events in the next 2 hours, overdue tasks, or other time-sensitive reminders. Be concise (1-3 sentences). If there is nothing worth noting, respond with exactly: [SKIP]`
+
+    try {
+      const messages: Array<{ role: 'user' | 'assistant'; content: any }> = [
+        { role: 'user', content: instructions },
+      ]
+      const response = await this.thinkWithMessages(messages)
+      const trimmed = response.trim()
+
+      // Only broadcast if agent found something meaningful
+      if (trimmed && trimmed !== '[SKIP]' && !trimmed.startsWith('[SKIP]')) {
+        await this.transport.broadcast({
+          type: 'message',
+          content: response,
+          data: { proactive: true },
+        })
+      }
+    } catch {
+      // Heartbeat failure is non-fatal — silently skip
+    }
   }
 
   getSkills(): Skill[] {

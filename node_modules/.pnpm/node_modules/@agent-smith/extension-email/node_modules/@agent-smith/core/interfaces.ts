@@ -174,6 +174,10 @@ export interface AgentConfig {
     lastOpenedDate?: string
   }
   tasks?: Record<string, ScheduledTaskDefinition>
+  heartbeat?: {
+    enabled: boolean
+    intervalMinutes: number
+  }
 }
 
 // Interface for ConfigManager — used by gateway to avoid circular imports

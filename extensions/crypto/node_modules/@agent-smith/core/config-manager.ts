@@ -43,6 +43,10 @@ const DEFAULT_CONFIG: AgentConfig = {
     darkTheme: true,
     language: 'en',
   },
+  heartbeat: {
+    enabled: false,
+    intervalMinutes: 15,
+  },
 }
 
 export class ConfigManager implements IConfigManager {

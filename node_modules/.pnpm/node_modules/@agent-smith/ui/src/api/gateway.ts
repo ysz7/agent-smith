@@ -87,13 +87,14 @@ class GatewayClient {
         break
 
       case 'message':
-        // Used for scheduled task broadcasts (non-streaming)
+        // Used for scheduled task broadcasts and proactive heartbeat (non-streaming)
         chat.addMessage({
           id: Math.random().toString(36).slice(2),
           role: 'assistant',
           content: msg.content ?? '',
           timestamp: new Date(),
           isError: false,
+          isProactive: msg.data?.proactive === true,
         })
         break
 

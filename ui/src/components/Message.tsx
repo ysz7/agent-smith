@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { Paperclip } from 'lucide-react'
+import { Paperclip, Sparkles } from 'lucide-react'
 import type { ChatMessage } from '@/store/chat'
 import { cn } from '@/lib/utils'
 
@@ -184,6 +184,12 @@ export default function Message({ message }: MessageProps) {
 
   return (
     <div>
+      {message.isProactive && (
+        <div className="mb-1.5 flex items-center gap-1 text-[10px] text-muted-foreground/70">
+          <Sparkles className="h-2.5 w-2.5" />
+          <span>Proactive</span>
+        </div>
+      )}
       {message.isError ? (
         <p className="text-sm text-destructive">{message.content}</p>
       ) : screenshotParts ? (

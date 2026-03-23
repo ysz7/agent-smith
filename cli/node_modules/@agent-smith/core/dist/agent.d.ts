@@ -15,9 +15,15 @@ export declare class AgentSmith {
     private client;
     private auditLogPath;
     private lima;
+    private heartbeatTimer?;
+    private lastHeartbeatAt;
     constructor(storage: IStorage, transport: ITransport, scheduler: IScheduler, config: AgentConfig, skillDirs: string[], extensionDirs: string[], configManager?: IConfigManager | undefined, styleDirs?: string[], lima?: ILimaMemory, history?: IHistory);
     start(): Promise<void>;
     stop(): Promise<void>;
+    startHeartbeat(): void;
+    stopHeartbeat(): void;
+    private checkHeartbeat;
+    runHeartbeat(): Promise<void>;
     getSkills(): Skill[];
     getExtensionNames(): string[];
     getDiscoveredExtensionNames(): string[];
