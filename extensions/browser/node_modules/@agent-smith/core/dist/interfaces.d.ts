@@ -177,6 +177,10 @@ export interface AgentConfig {
         enabled: boolean;
         intervalMinutes: number;
     };
+    ollama?: {
+        host?: string;
+        think?: boolean;
+    };
 }
 export interface IConfigManager {
     load(): Promise<AgentConfig>;

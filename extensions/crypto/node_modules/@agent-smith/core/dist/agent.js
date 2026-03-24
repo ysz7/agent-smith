@@ -38,6 +38,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AgentSmith = void 0;
 const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
+const ollama_client_1 = require("./ollama-client");
 const fs = __importStar(require("fs/promises"));
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
@@ -68,7 +69,8 @@ class AgentSmith {
     extensionLoader;
     styleLoader;
     systemPrompt = '';
-    client;
+    anthropicClient;
+    ollamaClient = null;
     auditLogPath;
     lima = null;
     heartbeatTimer;
@@ -83,7 +85,7 @@ class AgentSmith {
         this.skillLoader = new skill_loader_1.SkillLoader(config, skillDirs);
         this.extensionLoader = new extension_loader_1.ExtensionLoader(config, storage, extensionDirs);
         this.styleLoader = new style_loader_1.StyleLoader(styleDirs);
-        this.client = new sdk_1.default({ apiKey: this.resolveApiKey(config) });
+        this.anthropicClient = new sdk_1.default({ apiKey: this.resolveApiKey(config) });
         this.auditLogPath = path.join(os.homedir(), '.agent-smith', 'audit.log');
         this.lima = lima ?? null;
     }
@@ -240,7 +242,15 @@ class AgentSmith {
             const fresh = await this.configManager.load();
             if (fresh.apiKey !== this.config.apiKey) {
                 this.config.apiKey = fresh.apiKey;
-                this.client = new sdk_1.default({ apiKey: fresh.apiKey });
+                this.anthropicClient = new sdk_1.default({ apiKey: fresh.apiKey });
+            }
+            if (fresh.agent.model !== this.config.agent.model) {
+                this.config.agent = { ...fresh.agent };
+                this.ollamaClient = null; // reset so new host/model is picked up
+            }
+            if (fresh.ollama?.host !== this.config.ollama?.host) {
+                this.config.ollama = fresh.ollama;
+                this.ollamaClient = null;
             }
             // Sync extension configs so running extensions see updated settings
             this.config.extensions = fresh.extensions;
@@ -320,19 +330,7 @@ class AgentSmith {
             await this.writeAuditLog({ messages });
         }
         const provider = (0, interfaces_1.detectProvider)(this.config.agent.model);
-        const cachingEnabled = this.config.performance?.promptCaching !== false;
-        const useAnthropicCache = provider === 'anthropic' && cachingEnabled;
-        // Build tool definitions — for Anthropic caching, mark last tool with cache_control
-        const toolDefs = this.tools.map((t, i) => ({
-            name: t.name,
-            description: t.description,
-            input_schema: { type: 'object', ...t.parameters },
-            ...(useAnthropicCache && i === this.tools.length - 1
-                ? { cache_control: { type: 'ephemeral' } }
-                : {}),
-        }));
-        // Inject date + LIMA context as a user message prefix so the system prompt stays
-        // stable across requests and Anthropic prompt caching is not invalidated.
+        // Inject date + LIMA context as a user message prefix.
         // Only prepend on depth 0 — tool-call continuations already have it in messages.
         let contextBlock = '';
         if (depth === 0) {
@@ -348,15 +346,31 @@ class AgentSmith {
         const messagesWithContext = (contextBlock && depth === 0)
             ? [{ role: 'user', content: `${contextBlock}\n\n---` }, ...messages]
             : messages;
+        // Ollama path
+        if (provider === 'ollama') {
+            return this.thinkStreamOllama(connectionId, this.toOllamaMessages(messagesWithContext), depth, limaContext, signal);
+        }
+        // Anthropic path
+        const cachingEnabled = this.config.performance?.promptCaching !== false;
+        const useAnthropicCache = cachingEnabled;
+        // Build tool definitions — mark last tool with cache_control for prompt caching
+        const toolDefs = this.tools.map((t, i) => ({
+            name: t.name,
+            description: t.description,
+            input_schema: { type: 'object', ...t.parameters },
+            ...(useAnthropicCache && i === this.tools.length - 1
+                ? { cache_control: { type: 'ephemeral' } }
+                : {}),
+        }));
         const stream = useAnthropicCache
-            ? this.client.beta.promptCaching.messages.stream({
+            ? this.anthropicClient.beta.promptCaching.messages.stream({
                 model: this.config.agent.model,
                 max_tokens: 4096,
                 system: [{ type: 'text', text: this.systemPrompt, cache_control: { type: 'ephemeral' } }],
                 messages: messagesWithContext,
                 ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
             })
-            : this.client.messages.stream({
+            : this.anthropicClient.messages.stream({
                 model: this.config.agent.model,
                 max_tokens: 4096,
                 system: this.systemPrompt,
@@ -441,14 +455,75 @@ class AgentSmith {
         }
         return fullText;
     }
+    // Ollama streaming path — works with Ollama-native message format
+    async thinkStreamOllama(connectionId, messages, depth = 0, limaContext = '', signal) {
+        if (depth > 5)
+            return 'Maximum tool call depth reached.';
+        const toolDefs = this.buildOllamaToolDefs();
+        let fullText = '';
+        let aborted = false;
+        let toolCalls;
+        try {
+            const result = await this.getOllamaClient().stream(this.config.agent.model, this.systemPrompt, messages, toolDefs, async (chunk) => {
+                await this.transport.send(connectionId, { type: 'chunk', content: chunk });
+            }, signal);
+            fullText = result.text;
+            toolCalls = result.toolCalls;
+            if (signal?.aborted)
+                aborted = true;
+        }
+        catch (err) {
+            if (err?.name === 'AbortError' || signal?.aborted) {
+                aborted = true;
+            }
+            else {
+                throw err;
+            }
+        }
+        if (aborted) {
+            return fullText ? fullText + '\n\n_(generation stopped)_' : '';
+        }
+        if (toolCalls?.length) {
+            const assistantMsg = { role: 'assistant', content: fullText, tool_calls: toolCalls };
+            const toolResultMsgs = [];
+            for (const tc of toolCalls) {
+                const tool = this.tools.find(t => t.name === tc.function.name);
+                if (!tool) {
+                    toolResultMsgs.push({ role: 'tool', content: `Tool "${tc.function.name}" not found` });
+                    continue;
+                }
+                try {
+                    const result = await tool.run(tc.function.arguments);
+                    const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+                    toolResultMsgs.push({ role: 'tool', content: resultStr });
+                    if (this.lima && this.config.performance?.limaEnabled !== false && resultStr.length >= 50) {
+                        this.lima.store({
+                            content: `[${tc.function.name}] ${resultStr.slice(0, 300)}`,
+                            scope: 'working',
+                            source: 'agent',
+                        }).catch(() => { });
+                    }
+                }
+                catch (err) {
+                    toolResultMsgs.push({ role: 'tool', content: `Tool error: ${err?.message ?? 'Unknown error'}` });
+                }
+            }
+            const continuation = await this.thinkStreamOllama(connectionId, [...messages, assistantMsg, ...toolResultMsgs], depth + 1, limaContext, signal);
+            fullText += continuation;
+        }
+        return fullText;
+    }
     // Non-streaming version used by scheduled tasks
     async thinkWithMessages(messages) {
+        if ((0, interfaces_1.detectProvider)(this.config.agent.model) === 'ollama') {
+            return this.thinkWithMessagesOllama(this.toOllamaMessages(messages));
+        }
         const toolDefs = this.tools.map(t => ({
             name: t.name,
             description: t.description,
             input_schema: { type: 'object', ...t.parameters },
         }));
-        const response = await this.client.messages.create({
+        const response = await this.anthropicClient.messages.create({
             model: this.config.agent.model,
             max_tokens: 4096,
             system: this.systemPrompt,
@@ -460,6 +535,30 @@ class AgentSmith {
         }
         const textBlock = response.content.find(b => b.type === 'text');
         return textBlock?.type === 'text' ? textBlock.text : '';
+    }
+    // Ollama non-streaming path — messages already in Ollama format
+    async thinkWithMessagesOllama(messages) {
+        const toolDefs = this.buildOllamaToolDefs();
+        const { text, toolCalls } = await this.getOllamaClient().complete(this.config.agent.model, this.systemPrompt, messages, toolDefs);
+        if (!toolCalls?.length)
+            return text;
+        const assistantMsg = { role: 'assistant', content: text, tool_calls: toolCalls };
+        const toolResultMsgs = [];
+        for (const tc of toolCalls) {
+            const tool = this.tools.find(t => t.name === tc.function.name);
+            if (!tool) {
+                toolResultMsgs.push({ role: 'tool', content: `Tool "${tc.function.name}" not found` });
+                continue;
+            }
+            try {
+                const result = await tool.run(tc.function.arguments);
+                toolResultMsgs.push({ role: 'tool', content: typeof result === 'string' ? result : JSON.stringify(result) });
+            }
+            catch (err) {
+                toolResultMsgs.push({ role: 'tool', content: `Tool error: ${err?.message ?? 'Unknown error'}` });
+            }
+        }
+        return this.thinkWithMessagesOllama([...messages, assistantMsg, ...toolResultMsgs]);
     }
     async handleToolUse(response, messages) {
         const toolResults = [];
@@ -503,7 +602,7 @@ class AgentSmith {
             description: t.description,
             input_schema: { type: 'object', ...t.parameters },
         }));
-        const nextResponse = await this.client.messages.create({
+        const nextResponse = await this.anthropicClient.messages.create({
             model: this.config.agent.model,
             max_tokens: 4096,
             system: this.systemPrompt,
@@ -521,8 +620,14 @@ class AgentSmith {
         if (msg.includes('401') || msg.toLowerCase().includes('authentication') || msg.toLowerCase().includes('api_key') || msg.toLowerCase().includes('apikey')) {
             return 'Error: Invalid API key. Please update it in Settings → General.';
         }
+        if (msg.includes('ECONNREFUSED') && msg.includes('11434')) {
+            return 'Error: Cannot connect to Ollama. Make sure Ollama is running (ollama serve).';
+        }
+        if (msg.toLowerCase().includes('model') && msg.toLowerCase().includes('not found')) {
+            return `Error: Ollama model not found. Run: ollama pull ${this.config.agent.model}`;
+        }
         if (msg.includes('ENOTFOUND') || msg.includes('ECONNREFUSED') || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('fetch failed')) {
-            return 'Error: Cannot connect to Anthropic API. Please check your internet connection.';
+            return 'Error: Cannot connect to API. Please check your connection.';
         }
         if (msg.includes('rate_limit') || msg.includes('429')) {
             return 'Error: Rate limit exceeded. Please wait a moment and try again.';
@@ -577,18 +682,21 @@ class AgentSmith {
             .map(m => `${m.role}: ${m.content.slice(0, 300)}`)
             .join('\n');
         try {
-            const response = await this.client.messages.create({
-                model: this.config.agent.model,
-                max_tokens: 500,
-                messages: [
-                    {
-                        role: 'user',
-                        content: `Summarize this conversation in 2-3 sentences, preserving key facts:\n\n${toSummarize}`,
-                    },
-                ],
-            });
-            const textBlock = response.content.find(b => b.type === 'text');
-            const summary = textBlock?.type === 'text' ? textBlock.text : 'Previous conversation compressed.';
+            const prompt = `Summarize this conversation in 2-3 sentences, preserving key facts:\n\n${toSummarize}`;
+            let summary;
+            if ((0, interfaces_1.detectProvider)(this.config.agent.model) === 'ollama') {
+                const { text } = await this.getOllamaClient().complete(this.config.agent.model, '', [{ role: 'user', content: prompt }], []);
+                summary = text || 'Previous conversation compressed.';
+            }
+            else {
+                const response = await this.anthropicClient.messages.create({
+                    model: this.config.agent.model,
+                    max_tokens: 500,
+                    messages: [{ role: 'user', content: prompt }],
+                });
+                const textBlock = response.content.find(b => b.type === 'text');
+                summary = textBlock?.type === 'text' ? textBlock.text : 'Previous conversation compressed.';
+            }
             await this.memory.compressWithSummary(summary, keepCount);
             console.log('Conversation history compressed.');
         }
@@ -611,6 +719,72 @@ class AgentSmith {
         catch {
             // Audit log failure is non-fatal
         }
+    }
+    getOllamaClient() {
+        if (!this.ollamaClient) {
+            const host = this.config.ollama?.host ?? 'http://localhost:11434';
+            const think = this.config.ollama?.think ?? false;
+            this.ollamaClient = new ollama_client_1.OllamaClient(host, think);
+        }
+        return this.ollamaClient;
+    }
+    buildOllamaToolDefs() {
+        return this.tools.map(t => ({
+            type: 'function',
+            function: {
+                name: t.name,
+                description: t.description,
+                parameters: { type: 'object', ...t.parameters },
+            },
+        }));
+    }
+    // Convert Anthropic-format messages to Ollama-native format
+    toOllamaMessages(messages) {
+        const result = [];
+        for (const m of messages) {
+            if (typeof m.content === 'string') {
+                result.push({ role: m.role, content: m.content });
+                continue;
+            }
+            if (!Array.isArray(m.content)) {
+                result.push({ role: m.role, content: String(m.content ?? '') });
+                continue;
+            }
+            // User message with tool_result blocks → one 'tool' message per result
+            if (m.content.some((b) => b.type === 'tool_result')) {
+                for (const block of m.content) {
+                    if (block.type === 'tool_result') {
+                        result.push({
+                            role: 'tool',
+                            content: typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? ''),
+                        });
+                    }
+                }
+                continue;
+            }
+            // Mixed content — text, images, tool_use
+            let text = '';
+            const images = [];
+            const toolCalls = [];
+            for (const block of m.content) {
+                if (block.type === 'text') {
+                    text += block.text;
+                }
+                else if (block.type === 'image') {
+                    images.push(block.source.data);
+                }
+                else if (block.type === 'tool_use') {
+                    toolCalls.push({ function: { name: block.name, arguments: block.input } });
+                }
+            }
+            const msg = { role: m.role, content: text };
+            if (images.length > 0)
+                msg.images = images;
+            if (toolCalls.length > 0)
+                msg.tool_calls = toolCalls;
+            result.push(msg);
+        }
+        return result;
     }
     registerLimaTools(lima) {
         this.tools.push({

@@ -17,18 +17,9 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useFloatingAvatar, type ResizeDir } from '@/hooks/useFloatingAvatar'
+import { PROVIDERS, detectProviderFromModel } from '@/lib/providers'
 
 const API = import.meta.env.DEV ? 'http://localhost:3000' : ''
-
-const MODELS: { id: string; label: string }[] = [
-  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
-  { id: 'claude-opus-4-6', label: 'Opus 4.6' },
-  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
-]
-
-function modelLabel(id: string) {
-  return MODELS.find((m) => m.id === id)?.label ?? id
-}
 
 export default function Chat() {
   const { messages, streamingContent, statusMessage, addMessage } = useChatStore()
@@ -66,8 +57,21 @@ export default function Chat() {
     return () => ro.disconnect()
   }, [initPosition, reclamp])
 
+  const [ollamaModels, setOllamaModels] = useState<string[]>([])
+
+  useEffect(() => {
+    fetch('/api/ollama/models')
+      .then(r => r.json())
+      .then(d => setOllamaModels(d.models ?? []))
+      .catch(() => {})
+  }, [])
+
   const isStreaming = streamingContent !== null
   const currentModel = config?.agent?.model ?? 'claude-sonnet-4-6'
+  const activeProvider = detectProviderFromModel(currentModel)
+  const availableModels = activeProvider === 'ollama'
+    ? ollamaModels
+    : (PROVIDERS.find(p => p.id === activeProvider)?.models as string[] ?? [])
 
   // Derive avatar state from chat activity
   const hasError = messages.length > 0 && messages[messages.length - 1].isError
@@ -420,18 +424,18 @@ export default function Chat() {
                         size="sm"
                         className="h-7 gap-1 px-2 text-xs text-muted-foreground font-normal"
                       >
-                        {modelLabel(currentModel)}
+                        {currentModel}
                         <ChevronDown className="h-3 w-3 opacity-60" />
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="min-w-[140px]">
-                      {MODELS.map((m) => (
+                      {availableModels.map((m) => (
                         <DropdownMenuItem
-                          key={m.id}
-                          onSelect={() => handleModelChange(m.id)}
-                          className={cn('text-xs', currentModel === m.id && 'font-medium')}
+                          key={m}
+                          onSelect={() => handleModelChange(m)}
+                          className={cn('text-xs', currentModel === m && 'font-medium')}
                         >
-                          {m.label}
+                          {m}
                         </DropdownMenuItem>
                       ))}
                     </DropdownMenuContent>

@@ -54,6 +54,7 @@ interface ConfigState {
   updateConfig: (patch: Partial<AgentConfig>) => Promise<void>
   toggleSkill: (name: string, enabled: boolean) => Promise<void>
   toggleExtension: (name: string, enabled: boolean) => Promise<void>
+  resetProvider: () => Promise<void>
 }
 
 export const useConfigStore = create<ConfigState>((set, get) => ({
@@ -69,9 +70,11 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
     try {
       const res = await fetch('/api/config')
       const config: AgentConfig = await res.json()
+      const anyKeySet = config.apiKey === '***' ||
+        Object.values(config.apiKeys ?? {}).some(v => v === '***')
       set({
         config,
-        hasApiKey: config.apiKey === '***',
+        hasApiKey: anyKeySet,
         isLoading: false,
       })
     } catch {
@@ -115,6 +118,11 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled }),
     })
+  },
+
+  resetProvider: async () => {
+    await fetch('/api/config/reset-provider', { method: 'POST' })
+    await get().fetchConfig()
   },
 
   toggleExtension: async (name: string, enabled: boolean) => {

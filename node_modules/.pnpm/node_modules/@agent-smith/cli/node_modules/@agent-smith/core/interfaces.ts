@@ -136,7 +136,7 @@ export function detectProvider(model: string): AIProvider {
   if (model.startsWith('claude')) return 'anthropic'
   if (model.startsWith('gpt-') || model.startsWith('o1') || model.startsWith('o3') || model.startsWith('o4')) return 'openai'
   if (model.startsWith('gemini') || model.startsWith('models/gemini')) return 'google'
-  if (model.startsWith('llama') || model.startsWith('mistral') || model.startsWith('qwen') || model.startsWith('phi')) return 'ollama'
+  if (model.startsWith('llama') || model.startsWith('mistral') || model.startsWith('qwen') || model.startsWith('phi') || model.startsWith('gemma')) return 'ollama'
   return 'anthropic' // default fallback
 }
 
@@ -200,6 +200,10 @@ export interface AgentConfig {
   heartbeat?: {
     enabled: boolean
     intervalMinutes: number
+  }
+  ollama?: {
+    host?: string   // default: http://localhost:11434
+    think?: boolean // enable thinking mode for qwen3+ models (default: false)
   }
 }
 

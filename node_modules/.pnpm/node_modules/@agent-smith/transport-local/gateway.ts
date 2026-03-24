@@ -126,11 +126,14 @@ export class LocalGateway implements ITransport {
   }
 
   private setupRoutes(): void {
-    // GET /api/config — returns config with apiKey masked
+    // GET /api/config — returns config with all API keys masked
     this.app.get('/api/config', async (_req, res) => {
       try {
         const config = await this.configManager.load()
-        res.json({ ...config, apiKey: config.apiKey ? '***' : '' })
+        const maskedApiKeys = Object.fromEntries(
+          Object.entries(config.apiKeys ?? {}).map(([k, v]) => [k, v ? '***' : ''])
+        )
+        res.json({ ...config, apiKey: config.apiKey ? '***' : '', apiKeys: maskedApiKeys })
       } catch {
         res.status(500).json({ error: 'Failed to load config' })
       }
@@ -180,6 +183,31 @@ export class LocalGateway implements ITransport {
         res.json({ ok: true })
       } catch {
         res.status(500).json({ error: 'Failed to save API key' })
+      }
+    })
+
+    // DELETE /api/config/apikeys/:provider — remove a single provider's API key
+    this.app.delete('/api/config/apikeys/:provider', async (req, res) => {
+      try {
+        const { provider } = req.params
+        if (provider === 'anthropic') {
+          await this.configManager.save({ apiKey: '', apiKeys: { anthropic: '' } } as any)
+        } else {
+          await this.configManager.save({ apiKeys: { [provider]: '' } } as any)
+        }
+        res.json({ ok: true })
+      } catch {
+        res.status(500).json({ error: 'Failed to delete API key' })
+      }
+    })
+
+    // POST /api/config/reset-provider — clear all API keys, returns user to onboarding
+    this.app.post('/api/config/reset-provider', async (_req, res) => {
+      try {
+        await this.configManager.save({ apiKey: '', apiKeys: {} } as any)
+        res.json({ ok: true })
+      } catch {
+        res.status(500).json({ error: 'Failed to reset provider' })
       }
     })
 
@@ -292,6 +320,32 @@ export class LocalGateway implements ITransport {
         res.json({ ok: true })
       } catch {
         res.status(500).json({ error: 'Failed to set style' })
+      }
+    })
+
+    // GET /api/ollama/models — list running/available models from local Ollama instance
+    this.app.get('/api/ollama/models', async (req, res) => {
+      try {
+        const config = await this.configManager.load()
+        const host = config.ollama?.host ?? 'http://localhost:11434'
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), 3000)
+        const response = await fetch(`${host}/api/tags`, { signal: controller.signal })
+        clearTimeout(timeout)
+        if (!response.ok) {
+          res.status(502).json({ error: 'Ollama returned an error', models: [] })
+          return
+        }
+        const data = await response.json() as { models?: { name: string }[] }
+        const models = (data.models ?? []).map((m: { name: string }) => m.name)
+        res.json({ models })
+      } catch (err: any) {
+        const msg = err?.message ?? ''
+        if (msg.includes('ECONNREFUSED') || msg.includes('aborted') || msg.includes('fetch')) {
+          res.json({ models: [], offline: true })
+        } else {
+          res.status(500).json({ error: 'Failed to fetch Ollama models', models: [] })
+        }
       }
     })
 

@@ -12,7 +12,8 @@ export declare class AgentSmith {
     private extensionLoader;
     private styleLoader;
     private systemPrompt;
-    private client;
+    private anthropicClient;
+    private ollamaClient;
     private auditLogPath;
     private lima;
     private heartbeatTimer?;
@@ -31,7 +32,9 @@ export declare class AgentSmith {
     runScheduledTask(taskId: string, instructions: string): Promise<void>;
     private handleMessage;
     private thinkStream;
+    private thinkStreamOllama;
     private thinkWithMessages;
+    private thinkWithMessagesOllama;
     private handleToolUse;
     private formatError;
     setStyle(name: string): Promise<void>;
@@ -40,6 +43,9 @@ export declare class AgentSmith {
     private buildSystemPrompt;
     private compress;
     private writeAuditLog;
+    private getOllamaClient;
+    private buildOllamaToolDefs;
+    private toOllamaMessages;
     private registerLimaTools;
     private registerTaskTools;
 }

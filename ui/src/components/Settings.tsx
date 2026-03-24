@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { Trash2 } from 'lucide-react'
 import { useConfigStore } from '@/store/config'
+import { PROVIDERS, detectProviderFromModel } from '@/lib/providers'
 import SkillCard from '@/components/SkillCard'
 import ExtensionCard from '@/components/ExtensionCard'
 import MemorySection from '@/components/MemorySection'
@@ -71,41 +73,9 @@ export default function Settings() {
 
 // ─── General ──────────────────────────────────────────────────────────────────
 
-const PROVIDERS: { id: string; label: string; placeholder: string; models: string[] }[] = [
-  {
-    id: 'anthropic',
-    label: 'Anthropic',
-    placeholder: 'sk-ant-…',
-    models: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'],
-  },
-  {
-    id: 'openai',
-    label: 'OpenAI',
-    placeholder: 'sk-…',
-    models: ['gpt-4o', 'gpt-4o-mini', 'o3', 'o4-mini'],
-  },
-  {
-    id: 'google',
-    label: 'Google',
-    placeholder: 'AIza…',
-    models: ['gemini-2.5-pro', 'gemini-2.0-flash'],
-  },
-  {
-    id: 'ollama',
-    label: 'Ollama (local)',
-    placeholder: 'no key needed',
-    models: ['llama3.3', 'mistral', 'qwen2.5', 'phi4'],
-  },
-]
-
-function detectProviderFromModel(model: string): string {
-  if (model.startsWith('claude')) return 'anthropic'
-  if (model.startsWith('gpt-') || model.startsWith('o3') || model.startsWith('o4')) return 'openai'
-  if (model.startsWith('gemini')) return 'google'
-  return 'ollama'
-}
 
 function GeneralSection({ config, updateConfig }: any) {
+  const { resetProvider, fetchConfig } = useConfigStore()
   const [agentName, setAgentName] = useState(config.agent.name)
   const [model, setModel] = useState(config.agent.model)
   const [styles, setStyles] = useState<{ name: string; description: string }[]>([])
@@ -114,6 +84,9 @@ function GeneralSection({ config, updateConfig }: any) {
   const [saving, setSaving] = useState<Record<string, boolean>>({})
   const [saved, setSaved] = useState<Record<string, boolean>>({})
   const [keyErrors, setKeyErrors] = useState<Record<string, string>>({})
+  const [deleting, setDeleting] = useState<Record<string, boolean>>({})
+  const [ollamaModels, setOllamaModels] = useState<string[]>([])
+  const [editingKey, setEditingKey] = useState<string | null>(null)
 
   const loadStyles = useCallback(async () => {
     try {
@@ -124,7 +97,18 @@ function GeneralSection({ config, updateConfig }: any) {
     } catch { /* ignore */ }
   }, [])
 
+  const loadOllamaModels = useCallback(async () => {
+    try {
+      const res = await fetch('/api/ollama/models')
+      const data = await res.json()
+      setOllamaModels(data.models ?? [])
+    } catch {
+      setOllamaModels([])
+    }
+  }, [])
+
   useEffect(() => { loadStyles() }, [loadStyles])
+  useEffect(() => { loadOllamaModels() }, [loadOllamaModels])
 
   const handleStyleChange = async (name: string) => {
     setActiveStyle(name)
@@ -149,6 +133,7 @@ function GeneralSection({ config, updateConfig }: any) {
       if (!res.ok) throw new Error('Failed')
       setKeys(k => ({ ...k, [providerId]: '' }))
       setSaved(s => ({ ...s, [providerId]: true }))
+      setEditingKey(null)
       setTimeout(() => setSaved(s => ({ ...s, [providerId]: false })), 2000)
     } catch {
       setKeyErrors(e => ({ ...e, [providerId]: 'Failed to save' }))
@@ -156,12 +141,36 @@ function GeneralSection({ config, updateConfig }: any) {
     setSaving(s => ({ ...s, [providerId]: false }))
   }
 
+  const handleDeleteKey = async (providerId: string) => {
+    setDeleting(d => ({ ...d, [providerId]: true }))
+    try {
+      await fetch(`/api/config/apikeys/${providerId}`, { method: 'DELETE' })
+      // fetchConfig updates hasApiKey — if no keys remain, app shows Onboarding automatically
+      await fetchConfig()
+    } catch { /* ignore */ }
+    setDeleting(d => ({ ...d, [providerId]: false }))
+  }
+
   const handleSaveAgent = async () => {
     await updateConfig({ agent: { ...config.agent, name: agentName, model } })
   }
 
+  const switchToProvider = (providerId: string) => {
+    const p = PROVIDERS.find(x => x.id === providerId)
+    if (!p) return
+    const models = providerId === 'ollama' ? ollamaModels : p.models
+    if (models.length === 0) return
+    const first = models[0]
+    setModel(first)
+    updateConfig({ agent: { ...config.agent, model: first } })
+  }
+
   const activeProvider = detectProviderFromModel(model)
-  const allModels = PROVIDERS.flatMap(p => p.models.map(m => ({ model: m, provider: p.id, label: p.label })))
+
+  // Model dropdown: only models from the active provider
+  const activeProviderModels = activeProvider === 'ollama'
+    ? ollamaModels
+    : (PROVIDERS.find(p => p.id === activeProvider)?.models ?? [])
 
   return (
     <div className="space-y-6 max-w-md">
@@ -177,19 +186,15 @@ function GeneralSection({ config, updateConfig }: any) {
           onChange={(e) => { setModel(e.target.value); updateConfig({ agent: { ...config.agent, model: e.target.value } }) }}
           className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
         >
-          {PROVIDERS.map(p => (
-            <optgroup key={p.id} label={p.label}>
-              {p.models.map(m => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </optgroup>
+          {activeProviderModels.map(m => (
+            <option key={m} value={m}>{m}</option>
           ))}
         </select>
         <p className="mt-1 text-xs text-muted-foreground">
           Provider: <span className="font-medium">{PROVIDERS.find(p => p.id === activeProvider)?.label ?? activeProvider}</span>
           {activeProvider === 'anthropic' && ' · prompt caching enabled'}
           {activeProvider === 'openai' && ' · caching automatic'}
-          {activeProvider === 'ollama' && ' · local, no caching'}
+          {activeProvider === 'ollama' && ` · local · ${ollamaModels.length} model${ollamaModels.length !== 1 ? 's' : ''} loaded`}
         </p>
       </Field>
 
@@ -210,44 +215,138 @@ function GeneralSection({ config, updateConfig }: any) {
       <div className="space-y-1.5">
         <Label className="text-muted-foreground">API Keys</Label>
         <div className="space-y-2">
+          {/* Cloud providers */}
           {PROVIDERS.filter(p => p.id !== 'ollama').map(p => {
             const isActive = p.id === activeProvider
             const isSet = p.id === 'anthropic'
               ? config.apiKey === '***'
               : config.apiKeys?.[p.id] === '***'
+            const isEditing = editingKey === p.id
             return (
               <div key={p.id} className={cn(
-                'rounded-lg border px-3 py-2.5',
-                isActive && 'border-foreground/30 bg-card',
+                'rounded-lg border px-3 py-2.5 transition-colors',
+                isActive ? 'border-foreground/30 bg-card' : 'border-border',
               )}>
-                <div className="flex items-center justify-between mb-1.5">
+                {/* Header row */}
+                <div className="flex items-center justify-between">
                   <span className="text-xs font-medium">{p.label}</span>
-                  {isActive && <span className="text-[10px] bg-foreground/10 text-foreground/70 rounded px-1.5 py-0.5">active</span>}
-                  {isSet && <span className="text-[10px] text-emerald-500">✓ set</span>}
+                  <div className="flex items-center gap-1.5">
+                    {isActive && (
+                      <span className="text-[10px] bg-foreground/10 text-foreground/70 rounded px-1.5 py-0.5">
+                        active
+                      </span>
+                    )}
+                    {isSet && (
+                      <span className="text-[10px] text-emerald-500">✓ set</span>
+                    )}
+                    {isSet && !isActive && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 px-2 text-[11px]"
+                        onClick={() => switchToProvider(p.id)}
+                      >
+                        Switch
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-[11px] text-muted-foreground"
+                      onClick={() => setEditingKey(isEditing ? null : p.id)}
+                    >
+                      {isEditing ? 'Cancel' : isSet ? 'Edit' : 'Set key'}
+                    </Button>
+                    {isSet && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                        onClick={() => handleDeleteKey(p.id)}
+                        disabled={deleting[p.id]}
+                        title="Remove key"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
-                <div className="flex gap-2">
-                  <Input
-                    type="password"
-                    value={keys[p.id] ?? ''}
-                    onChange={(e) => setKeys(k => ({ ...k, [p.id]: e.target.value }))}
-                    placeholder={isSet ? 'Change key…' : p.placeholder}
-                    className="text-xs h-8"
-                    onKeyDown={(e) => { if (e.key === 'Enter') handleSaveKey(p.id) }}
-                  />
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="h-8 px-3 text-xs shrink-0"
-                    onClick={() => handleSaveKey(p.id)}
-                    disabled={!keys[p.id]?.trim() || saving[p.id]}
-                  >
-                    {saved[p.id] ? '✓' : saving[p.id] ? '…' : 'Save'}
-                  </Button>
-                </div>
-                {keyErrors[p.id] && <p className="mt-1 text-xs text-destructive">{keyErrors[p.id]}</p>}
+                {/* Inline key input */}
+                {isEditing && (
+                  <div className="mt-2 flex gap-2">
+                    <Input
+                      type="password"
+                      value={keys[p.id] ?? ''}
+                      onChange={(e) => setKeys(k => ({ ...k, [p.id]: e.target.value }))}
+                      placeholder={isSet ? 'New key…' : p.placeholder}
+                      className="text-xs h-8"
+                      autoFocus
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleSaveKey(p.id) }}
+                    />
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="h-8 px-3 text-xs shrink-0"
+                      onClick={() => handleSaveKey(p.id)}
+                      disabled={!keys[p.id]?.trim() || saving[p.id]}
+                    >
+                      {saved[p.id] ? '✓' : saving[p.id] ? '…' : 'Save'}
+                    </Button>
+                  </div>
+                )}
+                {keyErrors[p.id] && (
+                  <p className="mt-1 text-xs text-destructive">{keyErrors[p.id]}</p>
+                )}
               </div>
             )
           })}
+
+          {/* Ollama */}
+          {(() => {
+            const isActive = activeProvider === 'ollama'
+            const isOnline = ollamaModels.length > 0
+            return (
+              <div className={cn(
+                'rounded-lg border px-3 py-2.5 transition-colors',
+                isActive ? 'border-foreground/30 bg-card' : 'border-border',
+              )}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-medium">Ollama</span>
+                    <span className="ml-2 text-[10px] text-green-600 dark:text-green-500">local</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {isActive && (
+                      <span className="text-[10px] bg-foreground/10 text-foreground/70 rounded px-1.5 py-0.5">
+                        active
+                      </span>
+                    )}
+                    {isOnline
+                      ? <span className="text-[10px] text-emerald-500">{ollamaModels.length} model{ollamaModels.length !== 1 ? 's' : ''}</span>
+                      : <span className="text-[10px] text-muted-foreground">offline</span>
+                    }
+                    {isOnline && !isActive && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 px-2 text-[11px]"
+                        onClick={() => switchToProvider('ollama')}
+                      >
+                        Switch
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })()}
+
+          <button
+            onClick={resetProvider}
+            className="w-full text-center text-xs text-muted-foreground hover:text-foreground transition-colors py-1 underline underline-offset-2"
+          >
+            Reset all providers →
+          </button>
         </div>
       </div>
     </div>

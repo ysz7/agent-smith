@@ -9,7 +9,7 @@ function detectProvider(model) {
         return 'openai';
     if (model.startsWith('gemini') || model.startsWith('models/gemini'))
         return 'google';
-    if (model.startsWith('llama') || model.startsWith('mistral') || model.startsWith('qwen') || model.startsWith('phi'))
+    if (model.startsWith('llama') || model.startsWith('mistral') || model.startsWith('qwen') || model.startsWith('phi') || model.startsWith('gemma'))
         return 'ollama';
     return 'anthropic'; // default fallback
 }
