@@ -60,6 +60,7 @@ class LocalGateway {
     skillsProvider;
     extensionsProvider;
     historyProvider;
+    agentHistoryProvider;
     stylesProvider;
     setStyleHandler;
     lima;
@@ -108,6 +109,9 @@ class LocalGateway {
     }
     setLima(lima) {
         this.lima = lima;
+    }
+    setAgentHistoryProvider(fn) {
+        this.agentHistoryProvider = fn;
     }
     setDocumentsDir(dir) {
         this.documentsDir = dir;
@@ -306,10 +310,14 @@ class LocalGateway {
                 res.status(500).json({ error: 'Failed to load extensions' });
             }
         });
-        // GET /api/history — recent chat history for UI on reconnect
-        this.app.get('/api/history', async (_req, res) => {
+        // GET /api/history?agentId=X — recent chat history for UI on reconnect
+        this.app.get('/api/history', async (req, res) => {
             try {
-                if (this.historyProvider) {
+                const agentId = req.query.agentId;
+                if (agentId && this.agentHistoryProvider) {
+                    res.json(await this.agentHistoryProvider(agentId));
+                }
+                else if (this.historyProvider) {
                     res.json(await this.historyProvider());
                 }
                 else {

@@ -897,7 +897,7 @@ Debounced chokidar watcher — перезагрузка максимум раз 
 - ✅ Написать `cli/cleanup.ts` — preuninstall скрипт (убрать PATH, спросить про удаление данных)
 - ✅ Прописать `.npmrc` — комментарий с инструкцией (prefix в проектном .npmrc запрещён npm)
 - ✅ Протестировать установку на Windows нативно (без WSL) — работает
-- [ ] Протестировать полное удаление — нет мусора в системе после `npm uninstall -g agent-smith`
+- ✅ Протестировать полное удаление — нет мусора в системе после `npm uninstall -g agent-smith`
 - ✅ Проверить что все пути в коде используют `path.join` и `os.homedir()` — никаких хардкоженных Unix путей
 - ✅ Проверить что нет вызовов `spawn('bash', ...)` — только кроссплатформенные команды
 - ✅ Протестировать запуск на Windows нативно (без WSL2) — работает
@@ -1009,12 +1009,6 @@ Debounced chokidar watcher — перезагрузка максимум раз 
 - ✅ Кнопка `+` в чате для прикрепления файлов
 - ✅ Авто-индексация прикреплённых файлов в LIMA
 
-**10.2 — Google Calendar / Apple Calendar**
-- [ ] _(отложено)_
-
-**10.3 — Gmail / Outlook**
-- [ ] _(отложено)_
-
 **10.4 — Smart calendar**
 - ✅ Extension `calendar` — хранилище событий (storage prefix `calendar:event:`)
 - ✅ `calendar_add` — создать событие, вернуть cron для reminder + конфликты
@@ -1040,7 +1034,6 @@ Debounced chokidar watcher — перезагрузка максимум раз 
 **10.6 — Heartbeat / Proactive agent**
 - ✅ Агент действует без промпта пользователя
 - ✅ Проактивные уведомления при важных событиях
-- [ ] Мониторинг входящих (почта, уведомления)
 
 ---
 
@@ -1073,7 +1066,7 @@ Debounced chokidar watcher — перезагрузка максимум раз 
 - [ ] Оркестратор динамически порождает orchestrator agents под задачу (только при `orchestration.enabled`)
 - ✅ Orchestrator agents видны в UI с меткой "auto" и кнопкой Stop — пользователь может прервать в любой момент
 - ✅ User agents персистируются в конфиге и восстанавливаются при перезапуске
-- [ ] Клик на user agent в AgentsOffice → открывает отдельный чат с ним
+- ✅ Клик на user agent в AgentsOffice → открывает отдельный чат с ним
 
 **11.3 — AgentsOffice (визуальный офис)**
 - ✅ Отдельная вкладка "Agents Office" в Sidebar
@@ -1084,4 +1077,4 @@ Debounced chokidar watcher — перезагрузка максимум раз 
 - ✅ Кнопка "+ New Agent" — диалог создания user agent (имя, модель, prompt)
 - ✅ Settings → Agents — лимиты user agents + orchestration настройки
 - [ ] Анимация коммуникации между агентами (линии/стрелки) — Phase 11C
-- [ ] Клик на user agent → отдельный чат — Phase 11C
+- ✅ Клик на user agent → отдельный чат — Phase 11C

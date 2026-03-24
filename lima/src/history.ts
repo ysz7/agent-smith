@@ -44,6 +44,20 @@ export class SqliteHistory implements IHistory {
     return rows.map(parseRow)
   }
 
+  async getRecentMain(count: number): Promise<Message[]> {
+    const rows = this.db.prepare(
+      `SELECT * FROM (SELECT * FROM messages WHERE agent_id IS NULL ORDER BY timestamp DESC LIMIT $count) ORDER BY timestamp ASC`
+    ).all({ count }) as Record<string, unknown>[]
+    return rows.map(parseRow)
+  }
+
+  async getRecentForAgent(count: number, agentId: string): Promise<Message[]> {
+    const rows = this.db.prepare(
+      `SELECT * FROM (SELECT * FROM messages WHERE agent_id = $agentId ORDER BY timestamp DESC LIMIT $count) ORDER BY timestamp ASC`
+    ).all({ count, agentId }) as Record<string, unknown>[]
+    return rows.map(parseRow)
+  }
+
   async getAll(): Promise<Message[]> {
     const rows = this.db.prepare(
       `SELECT * FROM messages ORDER BY timestamp ASC`

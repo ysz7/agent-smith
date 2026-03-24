@@ -15,6 +15,7 @@ export declare class LocalGateway implements ITransport {
     private skillsProvider?;
     private extensionsProvider?;
     private historyProvider?;
+    private agentHistoryProvider?;
     private stylesProvider?;
     private setStyleHandler?;
     private lima?;
@@ -49,6 +50,12 @@ export declare class LocalGateway implements ITransport {
     }[]>): void;
     setSetStyleHandler(fn: (name: string) => Promise<void>): void;
     setLima(lima: ILimaMemory): void;
+    setAgentHistoryProvider(fn: (agentId: string) => Promise<{
+        id: string;
+        role: string;
+        content: string;
+        timestamp: string;
+    }[]>): void;
     setDocumentsDir(dir: string): void;
     setAgentRegistry(registry: AgentRegistry): void;
     private broadcastAgentStatus;

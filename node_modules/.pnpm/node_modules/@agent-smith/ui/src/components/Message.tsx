@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { type Components } from 'react-markdown'
 import { Paperclip, Sparkles } from 'lucide-react'
 import type { ChatMessage } from '@/store/chat'
 import { cn } from '@/lib/utils'
@@ -99,6 +99,14 @@ function ScreenshotChip({ filePath, filename }: { filePath: string; filename: st
   )
 }
 
+const mdComponents: Components = {
+  a: ({ href, children }) => (
+    <a href={href} target="_blank" rel="noreferrer">
+      {children}
+    </a>
+  ),
+}
+
 function renderWithScreenshots(content: string) {
   const parts: React.ReactNode[] = []
   let last = 0
@@ -111,7 +119,7 @@ function renderWithScreenshots(content: string) {
 
     if (start > last) {
       parts.push(
-        <ReactMarkdown key={`md-${last}`}>{content.slice(last, start)}</ReactMarkdown>
+        <ReactMarkdown key={`md-${last}`} components={mdComponents}>{content.slice(last, start)}</ReactMarkdown>
       )
     }
 
@@ -123,7 +131,7 @@ function renderWithScreenshots(content: string) {
 
   if (last < content.length) {
     parts.push(
-      <ReactMarkdown key={`md-${last}`}>{content.slice(last)}</ReactMarkdown>
+      <ReactMarkdown key={`md-${last}`} components={mdComponents}>{content.slice(last)}</ReactMarkdown>
     )
   }
 
@@ -196,7 +204,7 @@ export default function Message({ message }: MessageProps) {
         <div className={proseClass}>{screenshotParts}</div>
       ) : (
         <div className={proseClass}>
-          <ReactMarkdown>{message.content}</ReactMarkdown>
+          <ReactMarkdown components={mdComponents}>{message.content}</ReactMarkdown>
         </div>
       )}
       <p className="mt-1 text-[10px] text-muted-foreground">

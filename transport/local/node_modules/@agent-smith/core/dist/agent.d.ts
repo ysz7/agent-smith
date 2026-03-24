@@ -1,5 +1,6 @@
 import type { IStorage, ITransport, IScheduler, IConfigManager, IHistory, AgentConfig, Skill } from './interfaces';
 import type { ILimaMemory } from '@agent-smith/lima';
+import type { AgentRegistry } from './agent-registry';
 export declare class AgentSmith {
     private storage;
     private transport;
@@ -18,9 +19,11 @@ export declare class AgentSmith {
     private lima;
     private heartbeatTimer?;
     private lastHeartbeatAt;
+    private registry;
     constructor(storage: IStorage, transport: ITransport, scheduler: IScheduler, config: AgentConfig, skillDirs: string[], extensionDirs: string[], configManager?: IConfigManager | undefined, styleDirs?: string[], lima?: ILimaMemory, history?: IHistory);
     start(): Promise<void>;
     stop(): Promise<void>;
+    setRegistry(registry: AgentRegistry): void;
     startHeartbeat(): void;
     stopHeartbeat(): void;
     private checkHeartbeat;
@@ -31,7 +34,11 @@ export declare class AgentSmith {
     runDailyBriefing(): Promise<void>;
     runScheduledTask(taskId: string, instructions: string): Promise<void>;
     private handleMessage;
+    private handleUserAgentMessage;
+    private thinkStreamForAgent;
+    private registerAgentTools;
     private thinkStream;
+    private parseTextToolCalls;
     private thinkStreamOllama;
     private thinkWithMessages;
     private thinkWithMessagesOllama;

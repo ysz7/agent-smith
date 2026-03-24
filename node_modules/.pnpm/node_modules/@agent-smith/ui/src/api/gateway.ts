@@ -7,6 +7,7 @@ class GatewayClient {
   private reconnectTimer?: ReturnType<typeof setTimeout>
   private reconnectDelay = 1000
   private historyLoaded = false
+  private activeAgentId: string | null = null  // tracks which agent is currently streaming
 
   connect(): void {
     // In dev, Vite runs on 5173 but backend WS is on 3000
@@ -42,14 +43,40 @@ class GatewayClient {
   }
 
   send(content: string, image?: { data: string; mediaType: string }): void {
+    this.activeAgentId = null
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: 'message', content, ...(image && { image }) }))
+    }
+  }
+
+  sendToAgent(agentId: string, content: string): void {
+    this.activeAgentId = agentId
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'message', content, agentId }))
     }
   }
 
   stop(): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: 'stop' }))
+    }
+  }
+
+  async loadAgentHistory(agentId: string): Promise<void> {
+    try {
+      const backendHost = import.meta.env.DEV ? 'http://localhost:3000' : ''
+      const res = await fetch(`${backendHost}/api/history?agentId=${encodeURIComponent(agentId)}`)
+      const data = await res.json()
+      if (!Array.isArray(data) || data.length === 0) return
+      const messages = data.map((m: any) => ({
+        id: m.id ?? Math.random().toString(36).slice(2),
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+        timestamp: new Date(m.timestamp),
+      }))
+      useChatStore.getState().setAgentHistory(agentId, messages)
+    } catch {
+      // Non-fatal
     }
   }
 
@@ -72,15 +99,27 @@ class GatewayClient {
         break
 
       case 'stream_start':
-        chat.startStreaming()
+        if (this.activeAgentId) {
+          chat.startAgentStreaming(this.activeAgentId)
+        } else {
+          chat.startStreaming()
+        }
         break
 
       case 'chunk':
-        chat.appendChunk(msg.content ?? '')
+        if (this.activeAgentId) {
+          chat.appendAgentChunk(this.activeAgentId, msg.content ?? '')
+        } else {
+          chat.appendChunk(msg.content ?? '')
+        }
         break
 
       case 'stream_end':
-        chat.endStreaming()
+        if (this.activeAgentId) {
+          chat.endAgentStreaming(this.activeAgentId)
+        } else {
+          chat.endStreaming()
+        }
         break
 
       case 'status':
@@ -103,19 +142,29 @@ class GatewayClient {
         useAgentsStore.getState().setAgents(msg.agents ?? [])
         break
 
-      case 'error':
-        // Make sure we close any open stream first
-        if (chat.streamingContent !== null) {
-          chat.endStreaming()
+      case 'error': {
+        const agentId = this.activeAgentId
+        if (agentId) {
+          chat.endAgentStreaming(agentId)
+          chat.addAgentMessage(agentId, {
+            id: Math.random().toString(36).slice(2),
+            role: 'assistant',
+            content: msg.content ?? 'An error occurred.',
+            timestamp: new Date(),
+            isError: true,
+          })
+        } else {
+          if (chat.streamingContent !== null) chat.endStreaming()
+          chat.addMessage({
+            id: Math.random().toString(36).slice(2),
+            role: 'assistant',
+            content: msg.content ?? 'An error occurred.',
+            timestamp: new Date(),
+            isError: true,
+          })
         }
-        chat.addMessage({
-          id: Math.random().toString(36).slice(2),
-          role: 'assistant',
-          content: msg.content ?? 'An error occurred.',
-          timestamp: new Date(),
-          isError: true,
-        })
         break
+      }
     }
   }
 

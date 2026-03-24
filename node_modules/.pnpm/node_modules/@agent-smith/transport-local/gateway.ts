@@ -22,6 +22,7 @@ export class LocalGateway implements ITransport {
   private skillsProvider?: () => { name: string; description: string; enabled: boolean; requires?: { extensions: string[] }; config?: Record<string, any> }[]
   private extensionsProvider?: () => { name: string; enabled: boolean }[]
   private historyProvider?: () => Promise<{ id: string; role: string; content: string; timestamp: string }[]>
+  private agentHistoryProvider?: (agentId: string) => Promise<{ id: string; role: string; content: string; timestamp: string }[]>
   private stylesProvider?: () => Promise<{ name: string; description: string }[]>
   private setStyleHandler?: (name: string) => Promise<void>
   private lima?: ILimaMemory
@@ -82,6 +83,10 @@ export class LocalGateway implements ITransport {
 
   setLima(lima: ILimaMemory): void {
     this.lima = lima
+  }
+
+  setAgentHistoryProvider(fn: (agentId: string) => Promise<{ id: string; role: string; content: string; timestamp: string }[]>): void {
+    this.agentHistoryProvider = fn
   }
 
   setDocumentsDir(dir: string): void {
@@ -283,10 +288,13 @@ export class LocalGateway implements ITransport {
       }
     })
 
-    // GET /api/history — recent chat history for UI on reconnect
-    this.app.get('/api/history', async (_req, res) => {
+    // GET /api/history?agentId=X — recent chat history for UI on reconnect
+    this.app.get('/api/history', async (req, res) => {
       try {
-        if (this.historyProvider) {
+        const agentId = req.query.agentId as string | undefined
+        if (agentId && this.agentHistoryProvider) {
+          res.json(await this.agentHistoryProvider(agentId))
+        } else if (this.historyProvider) {
           res.json(await this.historyProvider())
         } else {
           res.json([])

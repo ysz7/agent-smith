@@ -39,6 +39,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AgentSmith = void 0;
 const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
 const ollama_client_1 = require("./ollama-client");
+const crypto_1 = require("crypto");
 const fs = __importStar(require("fs/promises"));
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
@@ -47,6 +48,7 @@ const memory_1 = require("./memory");
 const skill_loader_1 = require("./skill-loader");
 const extension_loader_1 = require("./extension-loader");
 const style_loader_1 = require("./style-loader");
+const lima_1 = require("@agent-smith/lima");
 // Injected into every system prompt — cached by Anthropic, minimal token cost
 const SECURITY_RULES = `
 Security rules (always follow):
@@ -75,6 +77,7 @@ class AgentSmith {
     lima = null;
     heartbeatTimer;
     lastHeartbeatAt = 0;
+    registry = null;
     constructor(storage, transport, scheduler, config, skillDirs, extensionDirs, configManager, styleDirs = [], lima, history) {
         this.storage = storage;
         this.transport = transport;
@@ -123,6 +126,12 @@ class AgentSmith {
     async stop() {
         this.stopHeartbeat();
         await this.skillLoader.stop();
+    }
+    setRegistry(registry) {
+        this.registry = registry;
+        if (this.configManager) {
+            this.registerAgentTools(this.configManager, registry);
+        }
     }
     startHeartbeat() {
         if (this.heartbeatTimer)
@@ -237,6 +246,15 @@ class AgentSmith {
         }
     }
     async handleMessage(msg) {
+        // Route to user agent handler if agentId is set
+        if (msg.agentId && this.configManager) {
+            const fresh = await this.configManager.load();
+            const agentDef = fresh.multiAgent?.agents?.[msg.agentId];
+            if (agentDef) {
+                await this.handleUserAgentMessage(msg, agentDef);
+                return;
+            }
+        }
         // Reload live config fields from disk so UI changes take effect immediately
         if (this.configManager) {
             const fresh = await this.configManager.load();
@@ -320,6 +338,200 @@ class AgentSmith {
                 content: this.formatError(err),
             });
         }
+    }
+    async handleUserAgentMessage(msg, agentDef) {
+        const agentId = msg.agentId;
+        await this.memory.add({ role: 'user', content: msg.content, agentId });
+        const windowSize = this.config.performance?.historyWindow ?? 20;
+        let history = [];
+        if (this.memory instanceof lima_1.SqliteHistory) {
+            history = await this.memory.getRecentForAgent(windowSize, agentId);
+        }
+        const messages = history
+            .filter(m => m.role !== 'system')
+            .map(m => ({ role: m.role, content: m.content }));
+        if (messages.length === 0) {
+            messages.push({ role: 'user', content: msg.content });
+        }
+        try {
+            this.registry?.setStatus(agentId, 'thinking');
+            await this.transport.send(msg.connectionId, { type: 'stream_start' });
+            const response = await this.thinkStreamForAgent(msg.connectionId, messages, agentDef, 0, msg.signal);
+            await this.transport.send(msg.connectionId, { type: 'stream_end' });
+            if (response.trim()) {
+                await this.memory.add({ role: 'assistant', content: response, agentId });
+            }
+        }
+        catch (err) {
+            await this.transport.send(msg.connectionId, { type: 'stream_end' });
+            await this.transport.send(msg.connectionId, { type: 'error', content: this.formatError(err) });
+        }
+        finally {
+            this.registry?.setStatus(agentId, 'idle');
+        }
+    }
+    async thinkStreamForAgent(connectionId, messages, agentDef, depth = 0, signal) {
+        if (depth > 5)
+            return 'Maximum tool call depth reached.';
+        const systemPrompt = [
+            `You are ${agentDef.name} — a personal AI assistant.`,
+            agentDef.systemPrompt ?? '',
+            SECURITY_RULES,
+        ].filter(Boolean).join('\n\n').trim();
+        const now = new Date();
+        const dateStr = now.toLocaleString('en-US', {
+            weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+            hour: '2-digit', minute: '2-digit', hour12: false,
+        });
+        const messagesWithContext = depth === 0
+            ? [{ role: 'user', content: `[Current date and time: ${dateStr}]\n\n---` }, ...messages]
+            : messages;
+        const provider = (0, interfaces_1.detectProvider)(agentDef.model);
+        if (provider === 'ollama') {
+            const toolDefs = this.buildOllamaToolDefs();
+            let fullText = '';
+            let aborted = false;
+            let toolCalls;
+            try {
+                const result = await this.getOllamaClient().stream(agentDef.model, systemPrompt, this.toOllamaMessages(messagesWithContext), toolDefs, async (chunk) => { fullText += chunk; this.transport.send(connectionId, { type: 'chunk', content: chunk }); }, signal);
+                toolCalls = result.toolCalls;
+            }
+            catch (err) {
+                if (err?.name === 'AbortError' || signal?.aborted) {
+                    aborted = true;
+                }
+                else {
+                    throw err;
+                }
+            }
+            if (aborted)
+                return fullText ? fullText + '\n\n_(generation stopped)_' : '';
+            // Fallback: detect text-based tool calls for models without native function calling
+            if (!toolCalls?.length && fullText.trim()) {
+                const textCalls = this.parseTextToolCalls(fullText);
+                if (textCalls?.length) {
+                    toolCalls = textCalls;
+                    fullText = '';
+                }
+            }
+            if (toolCalls && toolCalls.length > 0) {
+                const toolResults = [];
+                for (const tc of toolCalls) {
+                    const tool = this.tools.find(t => t.name === tc.function.name);
+                    if (!tool) {
+                        toolResults.push({ role: 'tool', content: `Tool "${tc.function.name}" not found` });
+                        continue;
+                    }
+                    try {
+                        const result = await tool.run(tc.function.arguments);
+                        toolResults.push({ role: 'tool', content: typeof result === 'string' ? result : JSON.stringify(result) });
+                    }
+                    catch (e) {
+                        toolResults.push({ role: 'tool', content: `Tool error: ${e?.message ?? 'Unknown'}` });
+                    }
+                }
+                const nextMessages = [...this.toOllamaMessages(messagesWithContext), { role: 'assistant', content: fullText, tool_calls: toolCalls }, ...toolResults];
+                fullText += await this.thinkStreamForAgent(connectionId, nextMessages, agentDef, depth + 1, signal);
+            }
+            return fullText;
+        }
+        // Anthropic path — no prompt caching for user agents (avoids cache key collisions)
+        const toolDefs = this.tools.map(t => ({
+            name: t.name,
+            description: t.description,
+            input_schema: { type: 'object', ...t.parameters },
+        }));
+        const stream = this.anthropicClient.messages.stream({
+            model: agentDef.model,
+            max_tokens: 4096,
+            system: systemPrompt,
+            messages: messagesWithContext,
+            ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
+        });
+        let fullText = '';
+        let aborted = false;
+        try {
+            for await (const event of stream) {
+                if (signal?.aborted) {
+                    aborted = true;
+                    break;
+                }
+                if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+                    fullText += event.delta.text;
+                    await this.transport.send(connectionId, { type: 'chunk', content: event.delta.text });
+                }
+            }
+        }
+        catch (err) {
+            if (err?.name === 'AbortError' || signal?.aborted) {
+                aborted = true;
+            }
+            else {
+                throw err;
+            }
+        }
+        if (aborted)
+            return fullText ? fullText + '\n\n_(generation stopped)_' : '';
+        const finalMessage = await stream.finalMessage();
+        if (finalMessage.stop_reason === 'tool_use') {
+            const toolResults = [];
+            for (const block of finalMessage.content) {
+                if (block.type !== 'tool_use')
+                    continue;
+                const tool = this.tools.find(t => t.name === block.name);
+                if (!tool) {
+                    toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: `Tool "${block.name}" not found`, is_error: true });
+                    continue;
+                }
+                try {
+                    const result = await tool.run(block.input);
+                    toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: typeof result === 'string' ? result : JSON.stringify(result) });
+                }
+                catch (e) {
+                    toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: `Tool error: ${e?.message ?? 'Unknown'}`, is_error: true });
+                }
+            }
+            const nextMessages = [...messages, { role: 'assistant', content: finalMessage.content }, { role: 'user', content: toolResults }];
+            fullText += await this.thinkStreamForAgent(connectionId, nextMessages, agentDef, depth + 1, signal);
+        }
+        return fullText;
+    }
+    registerAgentTools(configManager, registry) {
+        // Remove existing create_user_agent tool if already registered
+        this.tools = this.tools.filter(t => t.name !== 'create_user_agent');
+        this.tools.push({
+            name: 'create_user_agent',
+            description: 'Create a new persistent user agent with a custom name, model, and optional system prompt. Use when the user asks to create a new agent, assistant, or bot.',
+            parameters: {
+                properties: {
+                    name: { type: 'string', description: 'Display name for the agent' },
+                    model: { type: 'string', description: 'AI model ID (e.g. claude-haiku-4-5-20251001). Defaults to a fast cheap model.' },
+                    systemPrompt: { type: 'string', description: 'Custom instructions that define the agent\'s persona and behavior' },
+                },
+                required: ['name'],
+            },
+            run: async ({ name, model, systemPrompt }) => {
+                const config = await configManager.load();
+                const def = {
+                    id: (0, crypto_1.randomUUID)(),
+                    name: name.trim(),
+                    model: model ?? config.multiAgent?.orchestration?.defaultModel ?? 'claude-haiku-4-5-20251001',
+                    systemPrompt: systemPrompt?.trim() || undefined,
+                    createdAt: new Date().toISOString(),
+                };
+                await configManager.createUserAgent(def);
+                registry.register({
+                    id: def.id,
+                    name: def.name,
+                    type: 'user',
+                    status: 'idle',
+                    model: def.model,
+                    createdAt: def.createdAt,
+                    systemPrompt: def.systemPrompt,
+                });
+                return { id: def.id, name: def.name, message: `Agent "${def.name}" created. Open Agents Office to chat with it.` };
+            },
+        });
     }
     // Streaming version of think — sends chunks via transport
     async thinkStream(connectionId, messages, depth = 0, limaContext = '', signal) {
@@ -455,6 +667,39 @@ class AgentSmith {
         }
         return fullText;
     }
+    // Parse tool calls emitted as plain text by models without native function calling.
+    // Handles multiple formats:
+    //   llama3.2: {"name": "...", "parameters": {...}}
+    //   qwen2:    [tool_call] {"name": "...", "arguments": {...}} [/tool_call]
+    parseTextToolCalls(text) {
+        // Extract JSON from [tool_call]...[/tool_call] wrapper if present
+        const tagMatch = text.match(/\[tool_call\]\s*([\s\S]*?)\s*\[\/tool_call\]/i);
+        const candidate = tagMatch
+            ? tagMatch[1].trim()
+            : text.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
+        let parsed;
+        try {
+            parsed = JSON.parse(candidate);
+        }
+        catch {
+            const match = candidate.match(/\{[\s\S]*\}/);
+            if (!match)
+                return undefined;
+            try {
+                parsed = JSON.parse(match[0]);
+            }
+            catch {
+                return undefined;
+            }
+        }
+        if (typeof parsed?.name !== 'string')
+            return undefined;
+        // Support both "parameters" (llama3.2) and "arguments" (qwen2) keys
+        const args = parsed.parameters ?? parsed.arguments;
+        if (args === undefined)
+            return undefined;
+        return [{ function: { name: parsed.name, arguments: args } }];
+    }
     // Ollama streaming path — works with Ollama-native message format
     async thinkStreamOllama(connectionId, messages, depth = 0, limaContext = '', signal) {
         if (depth > 5)
@@ -482,6 +727,14 @@ class AgentSmith {
         }
         if (aborted) {
             return fullText ? fullText + '\n\n_(generation stopped)_' : '';
+        }
+        // Fallback: detect text-based tool calls for models without native function calling
+        if (!toolCalls?.length && fullText.trim()) {
+            const textCalls = this.parseTextToolCalls(fullText);
+            if (textCalls?.length) {
+                toolCalls = textCalls;
+                fullText = '';
+            }
         }
         if (toolCalls?.length) {
             const assistantMsg = { role: 'assistant', content: fullText, tool_calls: toolCalls };
@@ -540,11 +793,12 @@ class AgentSmith {
     async thinkWithMessagesOllama(messages) {
         const toolDefs = this.buildOllamaToolDefs();
         const { text, toolCalls } = await this.getOllamaClient().complete(this.config.agent.model, this.systemPrompt, messages, toolDefs);
-        if (!toolCalls?.length)
+        const resolvedCalls = toolCalls?.length ? toolCalls : this.parseTextToolCalls(text);
+        if (!resolvedCalls?.length)
             return text;
-        const assistantMsg = { role: 'assistant', content: text, tool_calls: toolCalls };
+        const assistantMsg = { role: 'assistant', content: resolvedCalls === toolCalls ? text : '', tool_calls: resolvedCalls };
         const toolResultMsgs = [];
-        for (const tc of toolCalls) {
+        for (const tc of resolvedCalls) {
             const tool = this.tools.find(t => t.name === tc.function.name);
             if (!tool) {
                 toolResultMsgs.push({ role: 'tool', content: `Tool "${tc.function.name}" not found` });

@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { Plus, Square, Trash2, Bot, Crown, Pencil, Users } from 'lucide-react'
+import { Plus, Square, Trash2, Bot, Crown, Pencil, Users, MessageSquare } from 'lucide-react'
 import { useAgentsStore, type AgentEntry } from '@/store/agents'
 import { useConfigStore } from '@/store/config'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
+import AgentChatPanel from '@/components/AgentChatPanel'
 
 const API = import.meta.env.DEV ? 'http://localhost:3000' : ''
 
@@ -33,11 +34,12 @@ const STATUS_LABELS: Record<AgentEntry['status'], string> = {
 
 // ─── Agent Card ───────────────────────────────────────────────────────────────
 
-function AgentCard({ agent, onEdit, onDelete, onStop }: {
+function AgentCard({ agent, onEdit, onDelete, onStop, onChat }: {
   agent: AgentEntry
   onEdit: (agent: AgentEntry) => void
   onDelete: (id: string) => void
   onStop: (id: string) => void
+  onChat?: (agent: AgentEntry) => void
 }) {
   const isMain = agent.type === 'main'
   const isOrchestrator = agent.type === 'orchestrator'
@@ -106,6 +108,16 @@ function AgentCard({ agent, onEdit, onDelete, onStop }: {
             </Button>
           ) : (
             <>
+              {onChat && (
+                <Button
+                  variant="ghost" size="sm"
+                  className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => onChat(agent)}
+                >
+                  <MessageSquare className="h-3 w-3" />
+                  Chat
+                </Button>
+              )}
               <Button
                 variant="ghost" size="sm"
                 className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
@@ -256,6 +268,7 @@ export default function AgentsOffice() {
   const { config } = useConfigStore()
   const [showCreate, setShowCreate] = useState(false)
   const [editingAgent, setEditingAgent] = useState<AgentEntry | null>(null)
+  const [chatAgent, setChatAgent] = useState<AgentEntry | null>(null)
 
   const canCreate = config?.multiAgent?.userCreated?.enabled !== false
   const userAgents = agents.filter((a) => a.type === 'user')
@@ -323,20 +336,27 @@ export default function AgentsOffice() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
-        {showOnboarding && canCreate ? (
-          <Onboarding onCreateClick={() => setShowCreate(true)} />
+      <div className="flex-1 overflow-hidden">
+        {chatAgent ? (
+          <AgentChatPanel agent={chatAgent} onClose={() => setChatAgent(null)} />
         ) : (
-          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 max-w-4xl">
-            {sorted.map((agent) => (
-              <AgentCard
-                key={agent.id}
-                agent={agent}
-                onEdit={setEditingAgent}
-                onDelete={handleDelete}
-                onStop={handleStop}
-              />
-            ))}
+          <div className="h-full overflow-y-auto p-6">
+            {showOnboarding && canCreate ? (
+              <Onboarding onCreateClick={() => setShowCreate(true)} />
+            ) : (
+              <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 max-w-4xl">
+                {sorted.map((agent) => (
+                  <AgentCard
+                    key={agent.id}
+                    agent={agent}
+                    onEdit={setEditingAgent}
+                    onDelete={handleDelete}
+                    onStop={handleStop}
+                    onChat={agent.type === 'user' ? setChatAgent : undefined}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

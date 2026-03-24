@@ -15,6 +15,7 @@ import type {
   Skill,
   Message,
   IncomingMessage,
+  UserAgentDefinition,
 } from './interfaces'
 import { detectProvider } from './interfaces'
 import { Memory } from './memory'
@@ -22,6 +23,8 @@ import { SkillLoader } from './skill-loader'
 import { ExtensionLoader } from './extension-loader'
 import { StyleLoader } from './style-loader'
 import type { ILimaMemory } from '@agent-smith/lima'
+import { SqliteHistory } from '@agent-smith/lima'
+import type { AgentRegistry } from './agent-registry'
 
 // Injected into every system prompt — cached by Anthropic, minimal token cost
 const SECURITY_RULES = `
@@ -47,6 +50,7 @@ export class AgentSmith {
   private lima: ILimaMemory | null = null
   private heartbeatTimer?: ReturnType<typeof setInterval>
   private lastHeartbeatAt = 0
+  private registry: AgentRegistry | null = null
 
   constructor(
     private storage: IStorage,
@@ -112,6 +116,13 @@ export class AgentSmith {
   async stop(): Promise<void> {
     this.stopHeartbeat()
     await this.skillLoader.stop()
+  }
+
+  setRegistry(registry: AgentRegistry): void {
+    this.registry = registry
+    if (this.configManager) {
+      this.registerAgentTools(this.configManager, registry)
+    }
   }
 
   startHeartbeat(): void {
@@ -237,6 +248,16 @@ export class AgentSmith {
   }
 
   private async handleMessage(msg: IncomingMessage): Promise<void> {
+    // Route to user agent handler if agentId is set
+    if (msg.agentId && this.configManager) {
+      const fresh = await this.configManager.load()
+      const agentDef = fresh.multiAgent?.agents?.[msg.agentId]
+      if (agentDef) {
+        await this.handleUserAgentMessage(msg, agentDef)
+        return
+      }
+    }
+
     // Reload live config fields from disk so UI changes take effect immediately
     if (this.configManager) {
       const fresh = await this.configManager.load()
@@ -326,6 +347,209 @@ export class AgentSmith {
         content: this.formatError(err),
       })
     }
+  }
+
+  private async handleUserAgentMessage(msg: IncomingMessage, agentDef: UserAgentDefinition): Promise<void> {
+    const agentId = msg.agentId!
+
+    await this.memory.add({ role: 'user', content: msg.content, agentId })
+
+    const windowSize = this.config.performance?.historyWindow ?? 20
+    let history: Message[] = []
+    if (this.memory instanceof SqliteHistory) {
+      history = await (this.memory as SqliteHistory).getRecentForAgent(windowSize, agentId)
+    }
+
+    const messages: Array<{ role: 'user' | 'assistant'; content: any }> = history
+      .filter(m => m.role !== 'system')
+      .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+
+    if (messages.length === 0) {
+      messages.push({ role: 'user', content: msg.content })
+    }
+
+    try {
+      this.registry?.setStatus(agentId, 'thinking')
+      await this.transport.send(msg.connectionId, { type: 'stream_start' })
+      const response = await this.thinkStreamForAgent(msg.connectionId, messages, agentDef, 0, msg.signal)
+      await this.transport.send(msg.connectionId, { type: 'stream_end' })
+      if (response.trim()) {
+        await this.memory.add({ role: 'assistant', content: response, agentId })
+      }
+    } catch (err: any) {
+      await this.transport.send(msg.connectionId, { type: 'stream_end' })
+      await this.transport.send(msg.connectionId, { type: 'error', content: this.formatError(err) })
+    } finally {
+      this.registry?.setStatus(agentId, 'idle')
+    }
+  }
+
+  private async thinkStreamForAgent(
+    connectionId: string,
+    messages: Array<{ role: 'user' | 'assistant'; content: any }>,
+    agentDef: UserAgentDefinition,
+    depth = 0,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    if (depth > 5) return 'Maximum tool call depth reached.'
+
+    const systemPrompt = [
+      `You are ${agentDef.name} — a personal AI assistant.`,
+      agentDef.systemPrompt ?? '',
+      SECURITY_RULES,
+    ].filter(Boolean).join('\n\n').trim()
+
+    const now = new Date()
+    const dateStr = now.toLocaleString('en-US', {
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    })
+    const messagesWithContext = depth === 0
+      ? [{ role: 'user' as const, content: `[Current date and time: ${dateStr}]\n\n---` }, ...messages]
+      : messages
+
+    const provider = detectProvider(agentDef.model)
+
+    if (provider === 'ollama') {
+      const toolDefs = this.buildOllamaToolDefs()
+      let fullText = ''
+      let aborted = false
+      let toolCalls: OllamaMessage['tool_calls']
+
+      try {
+        const result = await this.getOllamaClient().stream(
+          agentDef.model,
+          systemPrompt,
+          this.toOllamaMessages(messagesWithContext),
+          toolDefs,
+          async (chunk) => { fullText += chunk; this.transport.send(connectionId, { type: 'chunk', content: chunk }) },
+          signal,
+        )
+        toolCalls = result.toolCalls
+      } catch (err: any) {
+        if (err?.name === 'AbortError' || signal?.aborted) { aborted = true } else { throw err }
+      }
+
+      if (aborted) return fullText ? fullText + '\n\n_(generation stopped)_' : ''
+
+      // Fallback: detect text-based tool calls for models without native function calling
+      if (!toolCalls?.length && fullText.trim()) {
+        const textCalls = this.parseTextToolCalls(fullText)
+        if (textCalls?.length) { toolCalls = textCalls; fullText = '' }
+      }
+
+      if (toolCalls && toolCalls.length > 0) {
+        const toolResults: OllamaMessage[] = []
+        for (const tc of toolCalls) {
+          const tool = this.tools.find(t => t.name === tc.function.name)
+          if (!tool) { toolResults.push({ role: 'tool', content: `Tool "${tc.function.name}" not found` }); continue }
+          try {
+            const result = await tool.run(tc.function.arguments)
+            toolResults.push({ role: 'tool', content: typeof result === 'string' ? result : JSON.stringify(result) })
+          } catch (e: any) {
+            toolResults.push({ role: 'tool', content: `Tool error: ${e?.message ?? 'Unknown'}` })
+          }
+        }
+        const nextMessages = [...this.toOllamaMessages(messagesWithContext), { role: 'assistant', content: fullText, tool_calls: toolCalls }, ...toolResults]
+        fullText += await this.thinkStreamForAgent(connectionId, nextMessages as any, agentDef, depth + 1, signal)
+      }
+      return fullText
+    }
+
+    // Anthropic path — no prompt caching for user agents (avoids cache key collisions)
+    const toolDefs = this.tools.map(t => ({
+      name: t.name,
+      description: t.description,
+      input_schema: { type: 'object' as const, ...t.parameters },
+    }))
+
+    const stream = this.anthropicClient.messages.stream({
+      model: agentDef.model,
+      max_tokens: 4096,
+      system: systemPrompt,
+      messages: messagesWithContext,
+      ...(toolDefs.length > 0 ? { tools: toolDefs as any } : {}),
+    })
+
+    let fullText = ''
+    let aborted = false
+
+    try {
+      for await (const event of stream) {
+        if (signal?.aborted) { aborted = true; break }
+        if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+          fullText += event.delta.text
+          await this.transport.send(connectionId, { type: 'chunk', content: event.delta.text })
+        }
+      }
+    } catch (err: any) {
+      if (err?.name === 'AbortError' || signal?.aborted) { aborted = true } else { throw err }
+    }
+
+    if (aborted) return fullText ? fullText + '\n\n_(generation stopped)_' : ''
+
+    const finalMessage = await stream.finalMessage()
+
+    if (finalMessage.stop_reason === 'tool_use') {
+      const toolResults: Anthropic.ToolResultBlockParam[] = []
+      for (const block of finalMessage.content) {
+        if (block.type !== 'tool_use') continue
+        const tool = this.tools.find(t => t.name === block.name)
+        if (!tool) {
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: `Tool "${block.name}" not found`, is_error: true })
+          continue
+        }
+        try {
+          const result = await tool.run(block.input)
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: typeof result === 'string' ? result : JSON.stringify(result) })
+        } catch (e: any) {
+          toolResults.push({ type: 'tool_result', tool_use_id: block.id, content: `Tool error: ${e?.message ?? 'Unknown'}`, is_error: true })
+        }
+      }
+      const nextMessages = [...messages, { role: 'assistant' as const, content: finalMessage.content }, { role: 'user' as const, content: toolResults }]
+      fullText += await this.thinkStreamForAgent(connectionId, nextMessages, agentDef, depth + 1, signal)
+    }
+
+    return fullText
+  }
+
+  private registerAgentTools(configManager: IConfigManager, registry: AgentRegistry): void {
+    // Remove existing create_user_agent tool if already registered
+    this.tools = this.tools.filter(t => t.name !== 'create_user_agent')
+
+    this.tools.push({
+      name: 'create_user_agent',
+      description: 'Create a new persistent user agent with a custom name, model, and optional system prompt. Use when the user asks to create a new agent, assistant, or bot.',
+      parameters: {
+        properties: {
+          name: { type: 'string', description: 'Display name for the agent' },
+          model: { type: 'string', description: 'AI model ID (e.g. claude-haiku-4-5-20251001). Defaults to a fast cheap model.' },
+          systemPrompt: { type: 'string', description: 'Custom instructions that define the agent\'s persona and behavior' },
+        },
+        required: ['name'],
+      },
+      run: async ({ name, model, systemPrompt }: { name: string; model?: string; systemPrompt?: string }) => {
+        const config = await configManager.load()
+        const def: UserAgentDefinition = {
+          id: randomUUID(),
+          name: name.trim(),
+          model: model ?? config.multiAgent?.orchestration?.defaultModel ?? 'claude-haiku-4-5-20251001',
+          systemPrompt: systemPrompt?.trim() || undefined,
+          createdAt: new Date().toISOString(),
+        }
+        await configManager.createUserAgent(def)
+        registry.register({
+          id: def.id,
+          name: def.name,
+          type: 'user',
+          status: 'idle',
+          model: def.model,
+          createdAt: def.createdAt,
+          systemPrompt: def.systemPrompt,
+        })
+        return { id: def.id, name: def.name, message: `Agent "${def.name}" created. Open Agents Office to chat with it.` }
+      },
+    })
   }
 
   // Streaming version of think — sends chunks via transport
@@ -486,6 +710,33 @@ export class AgentSmith {
     return fullText
   }
 
+  // Parse tool calls emitted as plain text by models without native function calling.
+  // Handles multiple formats:
+  //   llama3.2: {"name": "...", "parameters": {...}}
+  //   qwen2:    [tool_call] {"name": "...", "arguments": {...}} [/tool_call]
+  private parseTextToolCalls(text: string): OllamaMessage['tool_calls'] | undefined {
+    // Extract JSON from [tool_call]...[/tool_call] wrapper if present
+    const tagMatch = text.match(/\[tool_call\]\s*([\s\S]*?)\s*\[\/tool_call\]/i)
+    const candidate = tagMatch
+      ? tagMatch[1].trim()
+      : text.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim()
+
+    let parsed: any
+    try {
+      parsed = JSON.parse(candidate)
+    } catch {
+      const match = candidate.match(/\{[\s\S]*\}/)
+      if (!match) return undefined
+      try { parsed = JSON.parse(match[0]) } catch { return undefined }
+    }
+
+    if (typeof parsed?.name !== 'string') return undefined
+    // Support both "parameters" (llama3.2) and "arguments" (qwen2) keys
+    const args = parsed.parameters ?? parsed.arguments
+    if (args === undefined) return undefined
+    return [{ function: { name: parsed.name, arguments: args } }]
+  }
+
   // Ollama streaming path — works with Ollama-native message format
   private async thinkStreamOllama(
     connectionId: string,
@@ -525,6 +776,15 @@ export class AgentSmith {
 
     if (aborted) {
       return fullText ? fullText + '\n\n_(generation stopped)_' : ''
+    }
+
+    // Fallback: detect text-based tool calls for models without native function calling
+    if (!toolCalls?.length && fullText.trim()) {
+      const textCalls = this.parseTextToolCalls(fullText)
+      if (textCalls?.length) {
+        toolCalls = textCalls
+        fullText = ''
+      }
     }
 
     if (toolCalls?.length) {
@@ -607,12 +867,13 @@ export class AgentSmith {
       toolDefs,
     )
 
-    if (!toolCalls?.length) return text
+    const resolvedCalls = toolCalls?.length ? toolCalls : this.parseTextToolCalls(text)
+    if (!resolvedCalls?.length) return text
 
-    const assistantMsg: OllamaMessage = { role: 'assistant', content: text, tool_calls: toolCalls }
+    const assistantMsg: OllamaMessage = { role: 'assistant', content: resolvedCalls === toolCalls ? text : '', tool_calls: resolvedCalls }
     const toolResultMsgs: OllamaMessage[] = []
 
-    for (const tc of toolCalls) {
+    for (const tc of resolvedCalls) {
       const tool = this.tools.find(t => t.name === tc.function.name)
       if (!tool) {
         toolResultMsgs.push({ role: 'tool', content: `Tool "${tc.function.name}" not found` })

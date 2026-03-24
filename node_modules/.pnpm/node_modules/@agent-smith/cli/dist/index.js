@@ -234,11 +234,26 @@ async function main() {
     }
     gateway.setAgentRegistry(registry);
     gateway.setLima(lima);
+    // Wire registry into smith so it can update agent statuses and create agents via tool
+    smith.setRegistry(registry);
     const documentsDir = path.join(agentSmithHome, 'documents');
     await fs.mkdir(documentsDir, { recursive: true });
     gateway.setDocumentsDir(documentsDir);
+    // Main chat history — only messages without agentId
     gateway.setHistoryProvider(async () => {
-        const msgs = await history.getRecent(50);
+        const msgs = await history.getRecentMain(50);
+        return msgs
+            .filter(m => m.role === 'user' || m.role === 'assistant')
+            .map(m => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            timestamp: m.timestamp.toISOString(),
+        }));
+    });
+    // Per-agent chat history
+    gateway.setAgentHistoryProvider(async (agentId) => {
+        const msgs = await history.getRecentForAgent(50, agentId);
         return msgs
             .filter(m => m.role === 'user' || m.role === 'assistant')
             .map(m => ({
