@@ -1,8 +1,6 @@
 # Agent Smith
 
-A personal AI agent platform. Minimal, beautiful, extensible.
-
-Run it locally in two minutes. Extend it with skills and tools. Works with Claude and local models via Ollama.
+Open Source AI agent that lives on your machine. Skills. Memory. Tools. All local. All yours.
 
 ---
 
