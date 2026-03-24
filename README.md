@@ -2,6 +2,8 @@
 
 Open Source AI agent that lives on your machine. Skills. Memory. Tools. All local. All yours.
 
+![Agent Smith](gallery/chat-agent-smith.png)
+
 ---
 
 ## Installation
