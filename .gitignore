@@ -32,3 +32,8 @@ pnpm-debug.log*
 
 # Test coverage
 coverage/
+
+# Internal development docs
+agent-smith-plan.md
+
+.claude/

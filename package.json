@@ -3,10 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "start": "pnpm --filter @agent-smith/cli run start",
     "dev": "pnpm --filter @agent-smith/cli run dev",
     "build": "pnpm -r run build",
     "test": "pnpm -r run test",
-    "start": "pnpm --filter @agent-smith/cli run start"
+    "setup": "cd extensions/computer-use && npx playwright install chromium"
   },
   "devDependencies": {
     "typescript": "^5.5.0"

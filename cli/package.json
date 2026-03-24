@@ -1,15 +1,10 @@
 {
   "name": "@agent-smith/cli",
   "version": "0.1.0",
-  "bin": {
-    "agent-smith": "dist/index.js"
-  },
   "scripts": {
     "build": "tsc",
     "dev": "tsx index.ts",
-    "start": "node dist/index.js",
-    "postinstall": "node dist/setup.js || true",
-    "preuninstall": "node dist/cleanup.js || true"
+    "start": "node dist/index.js"
   },
   "dependencies": {
     "@agent-smith/core": "workspace:*",
